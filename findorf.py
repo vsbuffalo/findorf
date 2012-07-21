@@ -48,17 +48,33 @@ class ContigSequence():
         
     def get_hsp_frames(self):
         """
-        Per each relative, check if all HSPs are in the same frame.
-        Return a dictionary of relatives and whether they are in the
-        same frame.
+        Per each relative, check if all HSPs of the first alignment
+        are in the same frame.  Return a dictionary of relatives and
+        whether they are in the same frame.
+
+        We care about a few things here:
+
+        1. All the HSPs of the top hit all in the same frame, for each
+        relative?
+
+        2. Do all relatives agree on the frame?
         """
-        
-        
+        frames = dict()
+        all_frames = set() # for across-relative frame comparison
+        for relative, hsps in self.relative.iteritems():
+            f = [h['frame'][0] for h in hsps] # TODO check for other tuple elements?
+            frames[relative] = list(set(f))
+            all_frames.add(f)
+        self.all_relatives_same_frame = True if len(all_frames) == 1 else False
+
+        # note whether there's a frameshift in the relatives
+        self.frame_shifts_by_relative = dict([(r, len(f) > 1) for r, v in frames.items()])
 
     def add_relative_alignment(self, relative, blast_record):
         """
-        Given a relative and a BioPython BLAST alignment object,
-        extract and store the relevant parts.
+        Given a relative and a BioPython BLAST alignment objects,
+        extract and store the relevant parts of the _best_ alignment
+        only.
         """
         relative_exists = self.relatives.get(relative, False)
 
@@ -67,18 +83,19 @@ class ContigSequence():
         else:
             raise Exception, "relative '%s' already exists for this ContigSequence" % relative
 
-        for alignment in blast_record:
-            self.relatives[relative][alignment.title] = list()
-            for hsp in alignment.hsps:
-                hsp_dict = {'align_length':alignment.length,
-                            'e':hsp.expect,
-                            'identities':hsp.identities,
-                            'frame':hsp.frame,
-                            'query_start':hsp.query_start,
-                            'sbjct_start':hsp.sbjct_start,
-                            'sbjct':hsp.sbjct}
+        # TODO check: are these gauranteed in best first order?
+        self.relatives[relative] = list()
+        for hsp in blast_record.alignments[0].hsps:
+            hsp_dict = {'align_length':alignment.length,
+                        'align_title': alignment.title,
+                        'e':hsp.expect,
+                        'identities':hsp.identities,
+                        'frame':hsp.frame,
+                        'query_start':hsp.query_start,
+                        'sbjct_start':hsp.sbjct_start,
+                        'sbjct':hsp.sbjct}
                 
-                self.relatives[relative][alignment.title].append(hsp_dict)
+            self.relatives[relative].append(hsp_dict)
 
                 
 
@@ -145,14 +162,14 @@ def join_blastx_results(args):
                 results[query_id][relative][align.title] = list()
                 for hsp in align.hsps:
                     results[query_id][relative][align.title].append({'align_length':align.length,
-                                                                'e':hsp.expect,
-                                                                'identities':hsp.identities,
-                                                                'frame':hsp.frame,
-                                                                'query_start':hsp.query_start,
-                                                                'sbjct_start':hsp.sbjct_start,
-                                                                'sbjct':hsp.sbjct
-                                                                })
-
+                                                                     'e':hsp.expect,
+                                                                     'identities':hsp.identities,
+                                                                     'frame':hsp.frame,
+                                                                     'query_start':hsp.query_start,
+                                                                     'sbjct_start':hsp.sbjct_start,
+                                                                     'sbjct':hsp.sbjct
+                                                                     })
+                    
         sys.stderr.write("done\n")
         
     cPickle.dump(results, file=args.output)

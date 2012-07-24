@@ -17,6 +17,8 @@ Specifying blastx Results
 import sys
 import pdb
 import cPickle
+from collections import Counter
+from string import Template
 try:
     from Bio.Blast import NCBIXML
     from Bio.Alphabet import IUPAC, generic_dna, DNAAlphabet
@@ -61,20 +63,59 @@ class ContigSequence():
         """
         frames = dict()
         all_frames = set() # for across-relative frame comparison
+
+        # for each hsp in a relative, record its frame in both the
+        # across-relative set and create a set within each relative.
         for relative, hsps in self.relatives.iteritems():
             f = [h['frame'][0] for h in hsps] # TODO check for other tuple elements?
             frames[relative] = list(set(f))
             all_frames.update(f)
+
         self.frames = frames
+        self.all_relatives_frames = all_frames
         self.all_relatives_same_frame = True if len(all_frames) == 1 else False
 
-        # note whether there's a frameshift in the relatives TODO:
-        # note whether it's one HSP or many, and also how good they
-        # are.
-        self.frame_shifts_by_relative = dict([(r, len(f) > 1) for r, v in frames.items()])
-        self.num_hsps_by_relative = dict([(r, len(v)) for k, v in self.relatives.items()])
+        # note whether there's a likely frameshift in the relatives
+        # TODO: note whether it's one HSP or many, and also how good
+        # they are.
+        self.relative_different_frames = dict([(r, len(f) > 1) for r, v in frames.items()])
 
         #frame_shifts_in_all_relatives = [k for k, x in a.items() if all(x.frame_shifts_by_relative.values())]
+
+    def report_hsp_frames(self):
+
+        """
+        A report method: report all relevant information about hsp
+        frame consistency.
+        """
+
+        info_values = {'num_rels':len(self.relatives),
+                       'num_frames_all':len(self.all_relatives_frames),
+                       'all_relatives_same_frame': self.all_relatives_same_frame}
+        
+        msg = Template("""
+## Frameshifts
+Number of relatives with HSPs: $num_rels
+Number of different frames across all relatives: $num_frames_all
+All relatives' HSPs are in the same frame: $all_relatives_same_frame
+
+### Frameshifts by Relative""").substitute(info_values)
+
+        for relative in self.relatives:
+            rel_values = {'relative':relative,
+                          'num_hsps':len(self.relatives[relative]),
+                          'num_hsps_diff_frames':len(self.frames[relative]),
+                          'likely_fs':self.relative_different_frames[relative]}
+            
+            msg += Template("""
+Relative: $relative
+Total HSPs: $num_hsps
+Number of HSPs in different frames: $num_hsps_diff_frames
+Likely frameshift (above value > 1): $likely_fs
+""").substitute(rel_values)
+
+        print msg
+        
 
     def get_relative_first_hsp_start(self):
         """
@@ -114,6 +155,7 @@ class ContigSequence():
         # TODO check: are these gauranteed in best first order?
         self.relatives[relative] = list()
         best_alignment = blast_record.alignments[0]
+        self.num_hsps = Counter()
         for hsp in best_alignment.hsps:
             hsp_dict = {'align_length':best_alignment.length,
                         'align_title': best_alignment.title,
@@ -123,6 +165,7 @@ class ContigSequence():
                         'query_start':hsp.query_start,
                         'sbjct_start':hsp.sbjct_start,
                         'sbjct':hsp.sbjct}
+            self.num_hsps[relative] += 1
                 
             self.relatives[relative].append(hsp_dict)
 
@@ -203,7 +246,11 @@ def predict_orf(args):
     ref_index = SeqIO.index(args.ref, "fasta")
     ref_ids = ref_index.keys()
 
-    return {'ref':ref_index, 'blast':cPickle.load(args.input)}
+    data = cPickle.load(args.input)
+    for relative, hsps in data.items():
+        hsps.get_hsp_frames()
+    
+    return {'ref':ref_index, 'data':data}
 
 def put_seq_in_frame(seq, frame, alphabet=IUPAC.unambiguous_dna):
     """

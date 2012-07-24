@@ -34,17 +34,15 @@ class ContigSequence():
     non-coding.
     """
 
-    def __init__(self, record):
+    def __init__(self):
         """
         Initialize a ContigSequence via a BioPython SeqRecord.
         """
-        self.record = record
         self.relatives = dict()
 
         ## annotation attributes
         self.annotation = dict(full_length_orf=None, missing5prime=None,
                                missing3prime=None, likely_psuedogene=None)
-        self.all_hsps_same_frame = None
         
     def get_hsp_frames(self):
         """
@@ -58,18 +56,48 @@ class ContigSequence():
         relative?
 
         2. Do all relatives agree on the frame?
+        
+        TODO we also want to compare the top hit *across* relatives
         """
         frames = dict()
         all_frames = set() # for across-relative frame comparison
-        for relative, hsps in self.relative.iteritems():
+        for relative, hsps in self.relatives.iteritems():
             f = [h['frame'][0] for h in hsps] # TODO check for other tuple elements?
             frames[relative] = list(set(f))
-            all_frames.add(f)
+            all_frames.update(f)
+        self.frames = frames
         self.all_relatives_same_frame = True if len(all_frames) == 1 else False
 
-        # note whether there's a frameshift in the relatives
+        # note whether there's a frameshift in the relatives TODO:
+        # note whether it's one HSP or many, and also how good they
+        # are.
         self.frame_shifts_by_relative = dict([(r, len(f) > 1) for r, v in frames.items()])
+        self.num_hsps_by_relative = dict([(r, len(v)) for k, v in self.relatives.items()])
 
+        #frame_shifts_in_all_relatives = [k for k, x in a.items() if all(x.frame_shifts_by_relative.values())]
+
+    def get_relative_first_hsp_start(self):
+        """
+        Annotate whether cases where:
+
+        1. The query starts with 1.
+
+        2. The subject starts at a position > 1.
+
+        3. The subject has a methionine.
+        """
+        # TODO earliest HSP: in all frames?
+        self.relative_subject_starts = dict()
+        for relative, hsps in self.relatives.iteritems():
+            # TODO should we make this fuzzy?
+            hsp_with_query_at_1 = [h for h in hsps if h['query_start'] == 1]
+            if len(hsp_with_query_at_1):
+                # get the hsp with query start at 1 with lowest e
+                tmp = sorted(hsp_with_query_at_1, key=lambda x: x['e'])[0]
+                self.relative_subject_starts[relative] = tmp['sbjct_start']
+
+
+        
     def add_relative_alignment(self, relative, blast_record):
         """
         Given a relative and a BioPython BLAST alignment objects,
@@ -85,9 +113,10 @@ class ContigSequence():
 
         # TODO check: are these gauranteed in best first order?
         self.relatives[relative] = list()
-        for hsp in blast_record.alignments[0].hsps:
-            hsp_dict = {'align_length':alignment.length,
-                        'align_title': alignment.title,
+        best_alignment = blast_record.alignments[0]
+        for hsp in best_alignment.hsps:
+            hsp_dict = {'align_length':best_alignment.length,
+                        'align_title': best_alignment.title,
                         'e':hsp.expect,
                         'identities':hsp.identities,
                         'frame':hsp.frame,
@@ -97,10 +126,8 @@ class ContigSequence():
                 
             self.relatives[relative].append(hsp_dict)
 
-                
 
-
-                
+        
 def parse_blastx_args(args):
     """
     Take a list of args and return a dictionary of names and files. If
@@ -154,21 +181,13 @@ def join_blastx_results(args):
 
         for record in NCBIXML.parse(blast_file):
             query_id = record.query.strip().split()[0]
+
+            # initialize a ContigSequence object for this query/contig
             if not results.get(query_id, False):
-                results[query_id] = dict()
-                
-            results[query_id][relative] = dict()
-            for align in record.alignments:
-                results[query_id][relative][align.title] = list()
-                for hsp in align.hsps:
-                    results[query_id][relative][align.title].append({'align_length':align.length,
-                                                                     'e':hsp.expect,
-                                                                     'identities':hsp.identities,
-                                                                     'frame':hsp.frame,
-                                                                     'query_start':hsp.query_start,
-                                                                     'sbjct_start':hsp.sbjct_start,
-                                                                     'sbjct':hsp.sbjct
-                                                                     })
+                results[query_id] = ContigSequence()
+
+            # add the relative's alignment information
+            results[query_id].add_relative_alignment(relative, record)
                     
         sys.stderr.write("done\n")
         
@@ -180,7 +199,11 @@ def predict_orf(args):
     """
     
     """
-    return cPickle.load(args.input)
+    # first, we index the FASTA reference
+    ref_index = SeqIO.index(args.ref, "fasta")
+    ref_ids = ref_index.keys()
+
+    return {'ref':ref_index, 'blast':cPickle.load(args.input)}
 
 def put_seq_in_frame(seq, frame, alphabet=IUPAC.unambiguous_dna):
     """
@@ -188,56 +211,12 @@ def put_seq_in_frame(seq, frame, alphabet=IUPAC.unambiguous_dna):
     """
     # seq = Seq(seq_str, alphabet) # TODO: handle?
     if frame < 0:
-        seq.reverse_complement()
+        seq = seq.reverse_complement()
         frame = -1*frame
     if not frame in range(1, 4):
         pdb.set_trace()
         raise Exception, "improper frame: frame must be in [1, 3]"
     return seq[(frame-1):]
-
-def annotate_orf(seq, table=1):
-    """
-    Annotate an ORF-candidate: given a sequence, add annotation attributes such
-    as after tranlation:
-      - full length
-      - missing 5'
-      - missing 3'
-
-    etc.
-    """
-    pseq = seq.tranlate(table)
-    
-
-def hsps_different_frame(joined_results):
-    """
-    Iterate through all results and check that HSPs are in the same
-    frame.
-    """
-
-    num_same_frame = 0
-    num_diff_frame = 0
-    full_length_orf = 0
-    flo_list = list()
-    start = "ATG"
-    stop_codons = ["TAG", "TGA", "TAA"]
-    for query_id, relative_alignments in joined_results.items():
-        for relative, alignments in relative_alignments.items():
-            for alignment, hsps in alignments.items():
-                frames = [h['frame'][0] for h in hsps]
-                if len(set(frames)) == 1:
-                    num_same_frame += 1
-
-                    # check if full length ORF
-                    seq_in_frame = put_seq_in_frame(ref_index[query_id], frames[0]) # TODO check frame tuple
-
-                    if start in seq_in_frame.seq and any([seq_in_frame.seq.find(c) > -1 for c in stop_codons]):
-                        full_length_orf += 1
-                        flo_list.append(seq_in_frame.seq)
-                else:
-                    num_diff_frame += 1
-                
-    return {'diferent_frame': num_diff_frame, 'same_frame':num_same_frame, 'full_orf':full_length_orf, "flos": flo_list}
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=info)
@@ -263,13 +242,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    # # first, we index the FASTA reference
-    ref_index = SeqIO.index(args.ref, "fasta")
-    ref_ids = ref_index.keys()
-
     ## Argument checking
     results = args.func(args)
 
-    a = hsps_different_frame(results)
     
     

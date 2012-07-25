@@ -30,6 +30,22 @@ except ImportError, e:
 import argparse
 import os
 
+def mean(x):
+    """
+    The arithematic mean.
+    """
+    return float(sum(x))/len(x) if len(x) > 0 else float('nan')
+    
+def pp_dict_of_counters(x):
+    """
+    Pretty print a dict of counters.
+    """
+    out = ""
+    for key, counter in x.iteritems():
+        for value, count in counter.iteritems():
+            out += "%s\t%s\t%s\n" % (key, value, count)
+    return out
+
 class ContigSequence():
     """
     A ContigSequence is an assembled contig, that may be coding or
@@ -41,6 +57,7 @@ class ContigSequence():
         Initialize a ContigSequence via a BioPython SeqRecord.
         """
         self.relatives = dict()
+        self.num_hsps = Counter()
 
         ## annotation attributes
         self.annotation = dict(full_length_orf=None, missing5prime=None,
@@ -48,96 +65,152 @@ class ContigSequence():
         
     def get_hsp_frames(self):
         """
-        Per each relative, check if all HSPs of the first alignment
-        are in the same frame.  Return a dictionary of relatives and
-        whether they are in the same frame.
-
-        We care about a few things here:
-
-        1. All the HSPs of the top hit all in the same frame, for each
-        relative?
-
-        2. Do all relatives agree on the frame?
-        
-        TODO we also want to compare the top hit *across* relatives
+        For each relative, count how the number of occurences of a
+        certain frame in HSPs. This creates the attribute
+        `frames`. Also, use a counter to keep track of the frames
+        accross HSPs and relatives, with the attribute `all_frames`.
         """
-        frames = dict()
-        all_frames = set() # for across-relative frame comparison
+        self.frames = dict()
+        self.all_frames = Counter()
 
         # for each hsp in a relative, record its frame in both the
         # across-relative set and create a set within each relative.
         for relative, hsps in self.relatives.iteritems():
-            f = [h['frame'][0] for h in hsps] # TODO check for other tuple elements?
-            frames[relative] = list(set(f))
-            all_frames.update(f)
+            self.frames[relative] = Counter()
 
-        self.frames = frames
-        self.all_relatives_frames = all_frames
-        self.all_relatives_same_frame = True if len(all_frames) == 1 else False
+            # count the number of frames per each relative's HSP
+            for h in hsps:
+                # TODO check for other tuple elements?
+                f = h['frame'][0]
+                self.frames[relative][f] += 1
+                
+                self.all_frames[f] += 1
 
-        # note whether there's a likely frameshift in the relatives
-        # TODO: note whether it's one HSP or many, and also how good
-        # they are.
-        self.relative_different_frames = dict([(r, len(f) > 1) for r, v in frames.items()])
-
-        #frame_shifts_in_all_relatives = [k for k, x in a.items() if all(x.frame_shifts_by_relative.values())]
-
-    def report_hsp_frames(self):
-
+    def all_relatives_agree_frame(self):
         """
-        A report method: report all relevant information about hsp
-        frame consistency.
+        Do all relatives agree on the same frame?
         """
+        return len(self.all_frames) == 1
 
-        info_values = {'num_rels':len(self.relatives),
-                       'num_frames_all':len(self.all_relatives_frames),
-                       'all_relatives_same_frame': self.all_relatives_same_frame}
+    def all_relatives_hsps_agree_frame(self):
+        """
+        Does every HSP's frame agree within a relative?
+
+        This has the side-effect that it sets the attribute
+        `relatives_with_diff_hsp_frames`.
+
+        Note that if all_relatives_agree_frame() is False, this
+        necessarily must be so too.
+        """
+        relatives_with_diff_hsp_frames = [r for r, c in self.frames.items() if len(c.keys()) > 1]
+        relatives_consistent = True if len(relatives_with_diff_hsp_frames) == 0 else False
+
+        self.relatives_with_diff_hsp_frames = relatives_with_diff_hsp_frames
+
+        return relatives_consistent
+
+
+#     def repr_hsp_annotation(self):
+
+#         """
         
-        msg = Template("""
-## Frameshifts
-Number of relatives with HSPs: $num_rels
-Number of different frames across all relatives: $num_frames_all
-All relatives' HSPs are in the same frame: $all_relatives_same_frame
+#         """
 
-### Frameshifts by Relative""").substitute(info_values)
-
-        for relative in self.relatives:
-            rel_values = {'relative':relative,
-                          'num_hsps':len(self.relatives[relative]),
-                          'num_hsps_diff_frames':len(self.frames[relative]),
-                          'likely_fs':self.relative_different_frames[relative]}
-            
-            msg += Template("""
-Relative: $relative
-Total HSPs: $num_hsps
-Number of HSPs in different frames: $num_hsps_diff_frames
-Likely frameshift (above value > 1): $likely_fs
-""").substitute(rel_values)
-
-        print msg
+#         info_values = {'num_hsps':repr(dict(self.num_hsps))[1:-1],
+#                        'all_frames':', '.join(list(self.all_frames)),
+#                        'frame_summary': pp_dict_of_counters(self.frames)}
+        
+#         msg = Template("""
+# ## Frameshifts
+# Number of HSPs per relative: $num_hsps
+# Frames across all relatives: $all_frames
+# Frames by relative:
+# \tframe\tnumber of HSPs
+# $frame_summary
+# """).substitute(info_values) # TODO consensus
+#         print msg
         
 
-    def get_relative_first_hsp_start(self):
+    def get_hsp_start_tuples(self):
         """
-        Annotate whether cases where:
+        For each relative, store the tuples (earliest HSP start,
+        subject start). Ideally, this would be (1, 1). Cases of (1, x)
+        where x > 1 indicates alignments of the earleist HSP where:
 
-        1. The query starts with 1.
+                 |----------------------------- query
+        |-------------------------------------- subject
 
-        2. The subject starts at a position > 1.
-
-        3. The subject has a methionine.
+        Indicating that the contig is probably missing a 5'end. But
+        this annotation is left for another method.
         """
-        # TODO earliest HSP: in all frames?
-        self.relative_subject_starts = dict()
+        self.start_tuples = dict()
         for relative, hsps in self.relatives.iteritems():
-            # TODO should we make this fuzzy?
-            hsp_with_query_at_1 = [h for h in hsps if h['query_start'] == 1]
-            if len(hsp_with_query_at_1):
-                # get the hsp with query start at 1 with lowest e
-                tmp = sorted(hsp_with_query_at_1, key=lambda x: x['e'])[0]
-                self.relative_subject_starts[relative] = tmp['sbjct_start']
+            # first HSP by *query* position (TODO: mind strandedness)
+            first_hsp = sorted(hsps, key=lambda x: x['query_start'])[0]
+            start_tuple = (first_hsp['query_start'], first_hsp['sbjct_start'])
+            self.start_tuples[relative] = start_tuples
 
 
+    def all_relative_same_query_start(self):
+        """
+        Do all relatives have the exact same query start? This
+        indicates consistency of the query.
+        """
+        return len(set([qs for qs, ss in self.start_tuples])) == 1
+
+    def all_relaties_fuzzy_query_start(self, fuzzy=10):
+        """
+        Do all relatives have roughly the same query start? This is
+        calculated as their abs(mean - x) < fuzzy.
+
+        Note this does not discount a different frame... this may be a
+        TOADD feature. For example, if all the relatives agree that
+        the query is in the 3rd frame, this leaves less room for the
+        fuzzy to kick in.
+        """
+        qs_mean = mean([qs for qs, ss in self.start_tuples])
+        return all([abs(qs - qs_mean) < fuzzy for qs, ss, in self.start_tuples])
+
+    def all_relatives_have_earliest_possible_start(self):
+        """
+        Do all query starts agree (same position), and is this
+        position the earliest possible start (given the frame).
+
+        Note this does not exclude the case that the subject start is
+        much after the query start, possibly incidating a missing
+        5'-end of a contig
+        """
+        if not self.all_relatives_agree_frame():
+            return False
+        frame = list(self.all_frames)[0]
+
+        query_start = list(set([qs for qs, ss in self.start_tuples]))[0]
+        
+
+    
+    def all_relatives_late_sbjct_start(self, fuzzy=10):
+        """
+        Do all relatives indicate a missing start, i.e. the majority
+        of relatives have tuples (query_start < fuzzy, sbjct_start >
+        fuzzy), indicating subject start is later than query start.
+
+        TOADD: factor in evolutionary distance.
+        """
+        
+        
+
+    
+    def report_first_hsp_starts(self):
+        """
+        A report method: print out how consistent the start subject
+        sites are.
+        """
+        info_values = {}
+        msg = Template("""
+## ORF Start Prediction
+Number of relatives where query's earliest HSP starts at 1: $num_start_1/$num_rels
+Number of 
+""").substitute()
         
     def add_relative_alignment(self, relative, blast_record):
         """
@@ -155,7 +228,6 @@ Likely frameshift (above value > 1): $likely_fs
         # TODO check: are these gauranteed in best first order?
         self.relatives[relative] = list()
         best_alignment = blast_record.alignments[0]
-        self.num_hsps = Counter()
         for hsp in best_alignment.hsps:
             hsp_dict = {'align_length':best_alignment.length,
                         'align_title': best_alignment.title,
@@ -249,6 +321,7 @@ def predict_orf(args):
     data = cPickle.load(args.input)
     for relative, hsps in data.items():
         hsps.get_hsp_frames()
+        hsps.get_hsp_start_tuples()
     
     return {'ref':ref_index, 'data':data}
 
@@ -285,6 +358,9 @@ if __name__ == "__main__":
                                 help="the joined results of all BLASTX files (Python pickle file; from sub-command joined)")
     parser_predict.add_argument('--ref', type=str, required=False,
                                 help="the FASTA reference that corresponds to BLASTX queries.")
+    parser_predict.add_argument('--full-length', action="store_true",
+                                help="the FASTA reference that corresponds to BLASTX queries.")
+
     parser_predict.set_defaults(func=predict_orf)
 
     args = parser.parse_args()

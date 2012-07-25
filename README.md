@@ -10,3 +10,8 @@ FASTA file and looping through them together.
 
 Currently each XML result file is being looped through to propagate
 the dictionary. This is a tad safer, a tad easier, and a bit slower.
+
+## TODO
+
+ - right now, we're looking at the earliest HSP by query_start
+   position, but this ignores negative strand cases. FIX

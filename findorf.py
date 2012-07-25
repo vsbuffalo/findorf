@@ -69,6 +69,22 @@ class ContigSequence():
         certain frame in HSPs. This creates the attribute
         `frames`. Also, use a counter to keep track of the frames
         accross HSPs and relatives, with the attribute `all_frames`.
+
+        The `consensus_frame` attribute is also set, based on if
+        `all_frames` has 1 key (i.e. every relative's HSPs are the
+        same). This is the strongest evidence a frame could have
+        (although this is dependent on number of HSPs to
+        relatives!). The lack of a consensus (due to either differing
+        HSP frames in a relative or differing relative hits) leads
+        this to take the value of None.
+
+        The `majority_frame` attribute indicates the majority, based
+        on the number of relatives that agree on a frame. We don't
+        take the number of HSPs, as one long, long HSP shouldn't be
+        counted less than many tiny HSPs (in the future, we may look
+        at number of identities in a frame). Majority across relatives
+        seems like the best approach. Note that relatives HSPs in
+        differing frames are *not* counted in the majority voting.
         """
         self.frames = dict()
         self.all_frames = Counter()
@@ -85,6 +101,21 @@ class ContigSequence():
                 self.frames[relative][f] += 1
                 
                 self.all_frames[f] += 1
+
+        # if there's a consensus frame set it or None
+        self.consensus_frame = self.all_frames.keys()[0] if len(self.all_frames) == 1 else None
+
+        # if there's a majority frame (by relatives, not HSPs), set
+        # that. A relative only has a say in the majority iff it HSPs
+        # that agree on the frame.
+        relative_frames = Counter()
+        for relative, frames in self.frames.iteritems():
+            if len(frames) == 1: # they agree
+                relative_frames[frame] += 1
+
+        # check if there is there a tie, set None if so
+        tie = set([c for frame, c in relative_frames.most_common(2)]) == 1
+        self.majority_frame = relative_frames.most_common(1)[0][0] if not tie else None
 
     def all_relatives_agree_frame(self):
         """
@@ -133,22 +164,34 @@ class ContigSequence():
 
     def get_hsp_start_tuples(self):
         """
-        For each relative, store the tuples (earliest HSP start,
-        subject start). Ideally, this would be (1, 1). Cases of (1, x)
-        where x > 1 indicates alignments of the earleist HSP where:
+        We want to find the 5'-most HSPs. Sorting by query_start is
+        not sufficient because reverse-strand cDNA contigs would have
+        a minimum query_start value corresponding to the 3'-most
+        subject. Note that we're aligning to proteins with blastx, so
+        proteins subjects will always be read left to right: start
+        translation to stop.
 
-                 |----------------------------- query
-        |-------------------------------------- subject
+        One could also look minimize subject_start, as the 5'-most HSP
+        will have the smallest subject start. However, Ksenia had a
+        really nice exception when this logic breaksdown: if there are
+        overlapping HSPs, both starting at subject one (due to a
+        repeated domain), and one HSP starts at query position 1400
+        (assume reverse strand) and the other starts at query position
+        1100, then the better ORF would anchored by the 5'-most, so
+        minimizing subject start is insufficient.
 
-        Indicating that the contig is probably missing a 5'end. But
-        this annotation is left for another method.
+        So now, we must have a consensus strand before getting the
+        5'-most HSP, as we use the minimize query start position.
         """
         self.start_tuples = dict()
         for relative, hsps in self.relatives.iteritems():
-            # first HSP by *query* position (TODO: mind strandedness)
-            first_hsp = sorted(hsps, key=lambda x: x['query_start'])[0]
+            # first, we need to get the frame.
+            first_hsp = sorted(hsps, key=lambda x: x['sbjct_start'])[0]
+
+            # if first_hsp.frame[0] < 0: # TODO LEFTHERE
+            #     five_prime_most
             start_tuple = (first_hsp['query_start'], first_hsp['sbjct_start'])
-            self.start_tuples[relative] = start_tuples
+            self.start_tuples[relative] = start_tuple
 
 
     def all_relative_same_query_start(self):
@@ -177,7 +220,7 @@ class ContigSequence():
         position the earliest possible start (given the frame).
 
         Note this does not exclude the case that the subject start is
-        much after the query start, possibly incidating a missing
+        much after the query start, possibly indicating a missing
         5'-end of a contig
         """
         if not self.all_relatives_agree_frame():
@@ -196,7 +239,7 @@ class ContigSequence():
 
         TOADD: factor in evolutionary distance.
         """
-        
+        pass
         
 
     
@@ -230,13 +273,15 @@ Number of
         best_alignment = blast_record.alignments[0]
         for hsp in best_alignment.hsps:
             hsp_dict = {'align_length':best_alignment.length,
-                        'align_title': best_alignment.title,
+                        'align_title':best_alignment.title,
                         'e':hsp.expect,
+                        'query_length':blast_record.query_letters,
                         'identities':hsp.identities,
                         'frame':hsp.frame,
                         'query_start':hsp.query_start,
+                        'query_end':hsp.query_end,
                         'sbjct_start':hsp.sbjct_start,
-                        'sbjct':hsp.sbjct}
+                        'sbjct_end':hsp.sbjct_end}
             self.num_hsps[relative] += 1
                 
             self.relatives[relative].append(hsp_dict)
@@ -319,10 +364,21 @@ def predict_orf(args):
     ref_ids = ref_index.keys()
 
     data = cPickle.load(args.input)
+    num_all_frames_agree = 0
+    num_hsps_different_frames = 0
+    total = 0
+    
     for relative, hsps in data.items():
         hsps.get_hsp_frames()
         hsps.get_hsp_start_tuples()
-    
+        num_all_frames_agree += int(hsps.all_relatives_agree_frame())
+        num_hsps_different_frames += int(not hsps.all_relatives_hsps_agree_frame())
+        total += 1
+
+    print "number of contigs with all relatives' frames agreeing:", num_all_frames_agree
+    print "number of contigs with a relative with HSPs in different frames:", num_hsps_different_frames
+    print "total:", total
+        
     return {'ref':ref_index, 'data':data}
 
 def put_seq_in_frame(seq, frame, alphabet=IUPAC.unambiguous_dna):

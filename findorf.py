@@ -70,21 +70,9 @@ class ContigSequence():
         `frames`. Also, use a counter to keep track of the frames
         accross HSPs and relatives, with the attribute `all_frames`.
 
-        The `consensus_frame` attribute is also set, based on if
-        `all_frames` has 1 key (i.e. every relative's HSPs are the
-        same). This is the strongest evidence a frame could have
-        (although this is dependent on number of HSPs to
-        relatives!). The lack of a consensus (due to either differing
-        HSP frames in a relative or differing relative hits) leads
-        this to take the value of None.
-
-        The `majority_frame` attribute indicates the majority, based
-        on the number of relatives that agree on a frame. We don't
-        take the number of HSPs, as one long, long HSP shouldn't be
-        counted less than many tiny HSPs (in the future, we may look
-        at number of identities in a frame). Majority across relatives
-        seems like the best approach. Note that relatives HSPs in
-        differing frames are *not* counted in the majority voting.
+        This method sets up the stage for methods like
+        consensus_frame, majority_frame, consensus_frameshift,
+        majority_frameshift by building up `frames` and `all_frames`.
         """
         self.frames = dict()
         self.all_frames = Counter()
@@ -102,44 +90,75 @@ class ContigSequence():
                 
                 self.all_frames[f] += 1
 
-        # if there's a consensus frame set it or None
-        self.consensus_frame = self.all_frames.keys()[0] if len(self.all_frames) == 1 else None
+    @property
+    def consensus_frame(self):
+        """
+        The `consensus_frame` attribute is based on if `all_frames`
+        has 1 key (i.e. every relative's HSPs are the same). This is
+        the strongest evidence a frame could have (although this is
+        dependent on number of HSPs to relatives!). The lack of a
+        consensus (due to either differing HSP frames in a relative or
+        differing relative hits) leads this to take the value of None.
+        """
+        return self.all_frames.keys()[0] if len(self.all_frames) == 1 else None
 
-        # if there's a majority frame (by relatives, not HSPs), set
-        # that. A relative only has a say in the majority iff it HSPs
-        # that agree on the frame.
-        relative_frames = Counter()
+    @property
+    def majority_frame(self):
+        """
+        The `majority_frame` attribute indicates the majority, based
+        on the number of relatives that agree on a frame. We don't
+        take the number of HSPs, as one long, long HSP shouldn't be
+        counted less than many tiny HSPs (in the future, we may look
+        at number of identities in a frame). Majority across relatives
+        seems like the best approach. Note that relatives HSPs in
+        differing frames are *not* counted in the majority voting.
+        """
+        relative_agree_frames = Counter()
+        for relative, count_frames in self.frames.iteritems():
+            if len(count_frames) == 1: # all HSPs agree (or there's just one)
+                only_frame = count_frames.keys()[0]
+                relative_agree_frames[only_frame] += 1
+            else: # some HSPs disagree
+                frame_key = tuple(sorted(counter_frames.keys()))
+                relative_disagree_frames[frame_key] += 1
+
+        if len(relative_agree_frames):
+            # check if there is there a tie, set None if so
+            tie = len(set([c for frame, c in relative_agree_frames.most_common(2)])) == 1
+            return relative_agree_frames.most_common(1)[0][0] if not tie else None
+        else:
+            return None
+
+    @property
+    def majority_frameshift(self):
+        """
+        Returns True of False indicating if there's a frameshift in
+        the majority of relatives. We do not count relatives with one
+        HSP as there isn't sufficient information.
+        """
+        frameshifts = 0
+        num_relatives = len(self.frames)
         for relative, frames in self.frames.iteritems():
-            if len(frames) == 1: # they agree
-                relative_frames[frame] += 1
+            # values corresponds to num HSPs per frame
+            if sum(frames.values()) < 2:
+                continue
+            if len(frames.keys()) > 1:
+                frameshifts += 1
+        return True if frameshifts/float(num_relatives) > 0.5 else False
 
-        # check if there is there a tie, set None if so
-        tie = set([c for frame, c in relative_frames.most_common(2)]) == 1
-        self.majority_frame = relative_frames.most_common(1)[0][0] if not tie else None
-
-    def all_relatives_agree_frame(self):
+    @property
+    def any_frameshift(self):
         """
-        Do all relatives agree on the same frame?
+        Return if there are any relatives with frameshifts.
         """
-        return len(self.all_frames) == 1
+        return any([len(c.keys()) > 1 for r, c in self.frames.iteritems()])
 
-    def all_relatives_hsps_agree_frame(self):
+    
+    @property
+    def consenus_frameshift(self):
         """
-        Does every HSP's frame agree within a relative?
-
-        This has the side-effect that it sets the attribute
-        `relatives_with_diff_hsp_frames`.
-
-        Note that if all_relatives_agree_frame() is False, this
-        necessarily must be so too.
+        Returns a tuple
         """
-        relatives_with_diff_hsp_frames = [r for r, c in self.frames.items() if len(c.keys()) > 1]
-        relatives_consistent = True if len(relatives_with_diff_hsp_frames) == 0 else False
-
-        self.relatives_with_diff_hsp_frames = relatives_with_diff_hsp_frames
-
-        return relatives_consistent
-
 
 #     def repr_hsp_annotation(self):
 

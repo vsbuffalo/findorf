@@ -12,6 +12,9 @@ added.
 
 Specifying blastx Results
 
+
+TODO: is there a stop codon betwene the 5'-most HSP and the end of the
+sequence?
 """
 
 STOP_CODONS = ("TAG", "TGA", "TAA")
@@ -39,15 +42,29 @@ def mean(x):
     """
     return float(sum(x))/len(x) if len(x) > 0 else float('nan')
 
-def find_codon(seq, codons):
+def find_longest_orf(seq_in_frame):
     """
-    Return True if seq contains any of codons.
+    Return the (start, stop) positions for the longest ORF, or None if
+    one is not found.
+
+    Note that longest ORF will *not* (of course) be from the earliest
+    M to the latest stop codon, since this is not a proper ORF.
     """
+    seq = str(seq_in_frame)
+
+    # these are in position order - TODO use namedtuple
+    codons = [(seq[pos:pos+3], pos) for pos in range(0, len(seq), 3)]
+    start_pos = None
+    stop_pos = None
+    
     for codon in codons:
-        res = seq.find(codon)
-        if res != -1:
-            return res
-    return -1
+        if start_pos is None and codon[0] in START_CODONS:
+            start_pos = codon[1]
+        if stop_pos is None and codon[0] in STOP_CODONS:
+            stop_pos = codon[1]
+
+    return (start_pos, stop_pos)
+    
 
 def put_seq_in_frame(seq, frame):
     """
@@ -242,10 +259,11 @@ class ContigSequence():
 
         seq = put_seq_in_frame(self.seq.seq, frame) # TODO fix, do in join
 
-        start_codon_pos = find_codon(seq, START_CODONS)
-        stop_codon_pos = find_codon(seq, STOP_CODONS)
-        self.contains_start = start_codon_pos > -1
-        self.contains_stop = stop_codon_pos > -1
+        start_codon_pos, stop_codon_pos = find_longest_orf(seq)
+        self.contains_start = start_codon_pos is not None
+        self.contains_stop = stop_codon_pos is not None
+        self.orf_start = start_codon_pos
+        self.orf_stop = stop_codon_pos
         
         if self.contains_start and self.contains_stop:
             self.full_length_orf = True
@@ -257,8 +275,8 @@ class ContigSequence():
             self.missing_stop = True
             self.orf = seq[start_codon_pos:]
         else:
-            # we really shouldn't hit this.x
-            raise Exception, "Inconsistent stop/start codons."
+            self.orf = None
+            self.missing_start_stop = True
 
         
     def report_first_hsp_starts(self):

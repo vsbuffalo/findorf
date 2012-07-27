@@ -14,6 +14,9 @@ Specifying blastx Results
 
 """
 
+STOP_CODONS = ("TAG", "TGA", "TAA")
+START_CODONS = ("ATG")
+
 import sys
 import pdb
 import cPickle
@@ -35,34 +38,49 @@ def mean(x):
     The arithematic mean.
     """
     return float(sum(x))/len(x) if len(x) > 0 else float('nan')
-    
-def pp_dict_of_counters(x):
-    """
-    Pretty print a dict of counters.
-    """
-    out = ""
-    for key, counter in x.iteritems():
-        for value, count in counter.iteritems():
-            out += "%s\t%s\t%s\n" % (key, value, count)
-    return out
 
+def find_codon(seq, codons):
+    """
+    Return True if seq contains any of codons.
+    """
+    for codon in codons:
+        res = seq.find(codon)
+        if res != -1:
+            return res
+    return -1
+
+def put_seq_in_frame(seq, frame):
+    """
+    Take a sequence and transform it to into the correct frame.
+    """
+    if frame < 0:
+        seq = seq.reverse_complement()
+        frame = -1*frame
+    if not frame in range(1, 4):
+        raise Exception, "improper frame: frame must be in [1, 3]"
+    return seq[(frame-1):]
+    
 class ContigSequence():
     """
     A ContigSequence is an assembled contig, that may be coding or
     non-coding.
     """
 
-    def __init__(self):
+    def __init__(self, query_id, sequence):
         """
         Initialize a ContigSequence via a BioPython SeqRecord.
         """
+        # data attributes
+        self.query_id = query_id
         self.relatives = dict()
         self.num_hsps = Counter()
+        self.seq = sequence
 
-        ## annotation attributes
-        self.annotation = dict(full_length_orf=None, missing5prime=None,
-                               missing3prime=None, likely_psuedogene=None)
-        
+        # some annotation attributes
+        self.missing_start = False
+        self.missing_stop = False
+        self.full_length_orf = False
+
     def get_hsp_frames(self):
         """
         For each relative, count how the number of occurences of a
@@ -112,15 +130,21 @@ class ContigSequence():
         at number of identities in a frame). Majority across relatives
         seems like the best approach. Note that relatives HSPs in
         differing frames are *not* counted in the majority voting.
+
+        Note that if there is a consensus_frame, majority_frame =
+        consensus_frame. We need to do this because a consensus frame
+        could have majority ties, which would force the majority to be
+        None when there is a consensus. We want majority=None to
+        indicate a non-clear majority.
         """
+        if self.consensus_frame is not None:
+            return self.consensus_frame
+        
         relative_agree_frames = Counter()
         for relative, count_frames in self.frames.iteritems():
             if len(count_frames) == 1: # all HSPs agree (or there's just one)
                 only_frame = count_frames.keys()[0]
                 relative_agree_frames[only_frame] += 1
-            else: # some HSPs disagree
-                frame_key = tuple(sorted(counter_frames.keys()))
-                relative_disagree_frames[frame_key] += 1
 
         if len(relative_agree_frames):
             # check if there is there a tie, set None if so
@@ -157,28 +181,10 @@ class ContigSequence():
     @property
     def consenus_frameshift(self):
         """
-        Returns a tuple
+        Returns a sorted tuple if all relatives agree on a
+        frameshift. Not implemeted now intentionally.
         """
-
-#     def repr_hsp_annotation(self):
-
-#         """
-        
-#         """
-
-#         info_values = {'num_hsps':repr(dict(self.num_hsps))[1:-1],
-#                        'all_frames':', '.join(list(self.all_frames)),
-#                        'frame_summary': pp_dict_of_counters(self.frames)}
-        
-#         msg = Template("""
-# ## Frameshifts
-# Number of HSPs per relative: $num_hsps
-# Frames across all relatives: $all_frames
-# Frames by relative:
-# \tframe\tnumber of HSPs
-# $frame_summary
-# """).substitute(info_values) # TODO consensus
-#         print msg
+        pass
         
 
     def get_hsp_start_tuples(self):
@@ -200,68 +206,61 @@ class ContigSequence():
         minimizing subject start is insufficient.
 
         So now, we must have a consensus strand before getting the
-        5'-most HSP, as we use the minimize query start position.
+        5'-most HSP, as we use the minimize query start position. If
+        there's a consensus frame, we use its sign; if not, we use the
+        majority. If neither exist, we don't calculate this.
         """
         self.start_tuples = dict()
-        for relative, hsps in self.relatives.iteritems():
-            # first, we need to get the frame.
-            first_hsp = sorted(hsps, key=lambda x: x['sbjct_start'])[0]
+        if self.majority_frame is not None:
+            strand = self.majority_frame/abs(self.majority_frame)
+            reverse = strand < 0 # higher query_start is the 5' most
+                                 # when reverse strand
+                                 
+            for relative, hsps in self.relatives.iteritems():
+                if reverse:
+                    most_5prime = sorted(hsps, key=lambda x: x['query_end'], reverse=True)[0]
+                    most_5prime_tuple = (most_5prime['query_end'], most_5prime['sbjct_start'], strand)
+                else:
+                    most_5prime = sorted(hsps, key=lambda x: x['query_start'], reverse=False)[0]
+                    most_5prime_tuple = (most_5prime['query_start'], most_5prime['sbjct_start'], strand)
+                    
+                self.start_tuples[relative] = most_5prime_tuple
 
-            # if first_hsp.frame[0] < 0: # TODO LEFTHERE
-            #     five_prime_most
-            start_tuple = (first_hsp['query_start'], first_hsp['sbjct_start'])
-            self.start_tuples[relative] = start_tuple
-
-
-    def all_relative_same_query_start(self):
+    def predict_orf(self):
         """
-        Do all relatives have the exact same query start? This
-        indicates consistency of the query.
-        """
-        return len(set([qs for qs, ss in self.start_tuples])) == 1
+        Predict the ORF from the consensus or majority frame's largest
+        ORF.
 
-    def all_relaties_fuzzy_query_start(self, fuzzy=10):
+        This also checks for a stop codon (valid 3'-end) and start
+        codon.
         """
-        Do all relatives have roughly the same query start? This is
-        calculated as their abs(mean - x) < fuzzy.
+        frame = self.consensus_frame if self.consensus_frame is not None else self.majority_frame
 
-        Note this does not discount a different frame... this may be a
-        TOADD feature. For example, if all the relatives agree that
-        the query is in the 3rd frame, this leaves less room for the
-        fuzzy to kick in.
-        """
-        qs_mean = mean([qs for qs, ss in self.start_tuples])
-        return all([abs(qs - qs_mean) < fuzzy for qs, ss, in self.start_tuples])
+        # if we can't predict the frame, we can't predict an ORF.
+        if frame is None:
+            return None
 
-    def all_relatives_have_earliest_possible_start(self):
-        """
-        Do all query starts agree (same position), and is this
-        position the earliest possible start (given the frame).
+        seq = put_seq_in_frame(self.seq.seq, frame) # TODO fix, do in join
 
-        Note this does not exclude the case that the subject start is
-        much after the query start, possibly indicating a missing
-        5'-end of a contig
-        """
-        if not self.all_relatives_agree_frame():
-            return False
-        frame = list(self.all_frames)[0]
-
-        query_start = list(set([qs for qs, ss in self.start_tuples]))[0]
+        start_codon_pos = find_codon(seq, START_CODONS)
+        stop_codon_pos = find_codon(seq, STOP_CODONS)
+        self.contains_start = start_codon_pos > -1
+        self.contains_stop = stop_codon_pos > -1
         
+        if self.contains_start and self.contains_stop:
+            self.full_length_orf = True
+            self.orf = seq[start_codon_pos:stop_codon_pos]
+        elif self.contains_stop and not self.contains_start:
+            self.missing_start = True
+            self.orf = seq[:stop_codon_pos]
+        elif not self.contains_stop and self.contains_start:
+            self.missing_stop = True
+            self.orf = seq[start_codon_pos:]
+        else:
+            # we really shouldn't hit this.x
+            raise Exception, "Inconsistent stop/start codons."
 
-    
-    def all_relatives_late_sbjct_start(self, fuzzy=10):
-        """
-        Do all relatives indicate a missing start, i.e. the majority
-        of relatives have tuples (query_start < fuzzy, sbjct_start >
-        fuzzy), indicating subject start is later than query start.
-
-        TOADD: factor in evolutionary distance.
-        """
-        pass
         
-
-    
     def report_first_hsp_starts(self):
         """
         A report method: print out how consistent the start subject
@@ -287,6 +286,7 @@ Number of
         else:
             raise Exception, "relative '%s' already exists for this ContigSequence" % relative
 
+        self.query_length = blast_record.query_letters
         # TODO check: are these gauranteed in best first order?
         self.relatives[relative] = list()
         best_alignment = blast_record.alignments[0]
@@ -294,7 +294,6 @@ Number of
             hsp_dict = {'align_length':best_alignment.length,
                         'align_title':best_alignment.title,
                         'e':hsp.expect,
-                        'query_length':blast_record.query_letters,
                         'identities':hsp.identities,
                         'frame':hsp.frame,
                         'query_start':hsp.query_start,
@@ -305,8 +304,6 @@ Number of
                 
             self.relatives[relative].append(hsp_dict)
 
-
-        
 def parse_blastx_args(args):
     """
     Take a list of args and return a dictionary of names and files. If
@@ -350,6 +347,10 @@ def join_blastx_results(args):
     results.
     """
 
+    # first, we index the FASTA reference
+    ref_index = SeqIO.index(args.ref, "fasta")
+    # ref_ids = ref_index.keys()
+
     blast_files = parse_blastx_args(args.blastx)
 
     results = dict()
@@ -360,58 +361,72 @@ def join_blastx_results(args):
 
         for record in NCBIXML.parse(blast_file):
             query_id = record.query.strip().split()[0]
-
+            #pdb.set_trace()
             # initialize a ContigSequence object for this query/contig
             if not results.get(query_id, False):
-                results[query_id] = ContigSequence()
+                results[query_id] = ContigSequence(query_id, ref_index[query_id])
 
             # add the relative's alignment information
             results[query_id].add_relative_alignment(relative, record)
-                    
+
         sys.stderr.write("done\n")
         
     cPickle.dump(results, file=args.output)
 
+def calculate_subject_starts(contig_seqs):
+    rel_sbjct_starts = Counter()
+    abs_sbjct_starts = Counter()
+
+    for contig_id, contig in contig_seqs.iteritems():
+        for start_tuple in contig.start_tuples.values():
+            rel_sbjct_starts[round(start_tuple[1]/float(contig.query_length), 2)] += 1
+            abs_sbjct_starts[start_tuple[1]] += 1
+    return {"rel_sbjct_starts":rel_sbjct_starts, "abs_sbjct_starts":abs_sbjct_starts}
 
 
 def predict_orf(args):
     """
     
     """
-    # first, we index the FASTA reference
-    ref_index = SeqIO.index(args.ref, "fasta")
-    ref_ids = ref_index.keys()
-
-    data = cPickle.load(args.input)
-    num_all_frames_agree = 0
+    contig_seqs = cPickle.load(args.input)
+    num_consensus_frames = 0
+    num_majority_frames = 0
     num_hsps_different_frames = 0
+    num_relatives_majority_frameshift = 0
+    
+    num_full_length_orf = 0
+    num_missing_start = 0
+    num_missing_stop = 0
     total = 0
     
-    for relative, hsps in data.items():
-        hsps.get_hsp_frames()
-        hsps.get_hsp_start_tuples()
-        num_all_frames_agree += int(hsps.all_relatives_agree_frame())
-        num_hsps_different_frames += int(not hsps.all_relatives_hsps_agree_frame())
+    for relative, cs in contig_seqs.iteritems():
+        #pdb.set_trace()
+        cs.get_hsp_frames()
+        cs.get_hsp_start_tuples()
+        cs.predict_orf()
+        num_consensus_frames += int(cs.consensus_frame is not None)
+        num_majority_frames += int(cs.consensus_frame is None and cs.majority_frame is not None)
+        num_hsps_different_frames += int(cs.any_frameshift)
+        num_relatives_majority_frameshift += int(cs.majority_frameshift)
+
+        num_full_length_orf += int(cs.full_length_orf)
+        num_missing_start += int(cs.missing_start)
+        num_missing_stop += int(cs.missing_stop)
+        
         total += 1
 
-    print "number of contigs with all relatives' frames agreeing:", num_all_frames_agree
+    print "number of contigs with all relatives' frames agree:", num_consensus_frames
+    print "number of contigs where a majority of relatives' frames agree (but no consensus frame):", num_majority_frames
     print "number of contigs with a relative with HSPs in different frames:", num_hsps_different_frames
+    print "number of contigs with a frameshift in the majority of relatives:", num_relatives_majority_frameshift
+    print
+    print "number of full length ORFs:", num_full_length_orf
+    print "number of missing start codons:", num_missing_start
+    print "number of missing stop codons:", num_missing_stop
     print "total:", total
-        
-    return {'ref':ref_index, 'data':data}
 
-def put_seq_in_frame(seq, frame, alphabet=IUPAC.unambiguous_dna):
-    """
-    Take a sequence and transform it to into the correct frame.
-    """
-    # seq = Seq(seq_str, alphabet) # TODO: handle?
-    if frame < 0:
-        seq = seq.reverse_complement()
-        frame = -1*frame
-    if not frame in range(1, 4):
-        pdb.set_trace()
-        raise Exception, "improper frame: frame must be in [1, 3]"
-    return seq[(frame-1):]
+    return {'contig_seqs':contig_seqs, 'rel_starts':calculate_subject_starts(contig_seqs)}
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=info)
@@ -424,6 +439,9 @@ if __name__ == "__main__":
     parser_join.add_argument('--output', type=argparse.FileType('wb'),
                              default="joined_blastx_dbs.pkl",
                              help="joined results of all the BLASTX results files (Python pickle file)")
+    parser_join.add_argument('--ref', type=str, required=False,
+                             help="the FASTA reference that corresponds to BLASTX queries.")
+
     parser_join.set_defaults(func=join_blastx_results)
 
     ## predict arguments
@@ -431,8 +449,6 @@ if __name__ == "__main__":
     parser_predict.add_argument('--input', type=argparse.FileType('rb'),
                                 default="joined_blastx_dbs.pkl",
                                 help="the joined results of all BLASTX files (Python pickle file; from sub-command joined)")
-    parser_predict.add_argument('--ref', type=str, required=False,
-                                help="the FASTA reference that corresponds to BLASTX queries.")
     parser_predict.add_argument('--full-length', action="store_true",
                                 help="the FASTA reference that corresponds to BLASTX queries.")
 

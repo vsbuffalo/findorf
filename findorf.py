@@ -15,6 +15,8 @@ Specifying blastx Results
 
 TODO: is there a stop codon betwene the 5'-most HSP and the end of the
 sequence?
+
+k51_contig_10673
 """
 
 STOP_CODONS = ("TAG", "TGA", "TAA")
@@ -52,7 +54,7 @@ def find_longest_orf(seq_in_frame):
     """
     seq = str(seq_in_frame)
 
-    # these are in position order - TODO use namedtuple
+    # these are in position order - TODO use namedtuple?
     codons = [(seq[pos:pos+3], pos) for pos in range(0, len(seq), 3)]
     start_pos = None
     stop_pos = None
@@ -60,8 +62,13 @@ def find_longest_orf(seq_in_frame):
     for codon in codons:
         if start_pos is None and codon[0] in START_CODONS:
             start_pos = codon[1]
-        if stop_pos is None and codon[0] in STOP_CODONS:
-            stop_pos = codon[1]
+        # note that we require start_pos is not None... we've must
+        # have already found a start codon
+        if stop_pos is None and codon[0] in STOP_CODONS and start_pos is not None:
+            # note that we subract 1 because we don't want beginning
+            # to first position of stop codon, but rather last
+            # nucleotide in the ORF
+            stop_pos = codon[1] - 1
 
     return (start_pos, stop_pos)
     
@@ -90,14 +97,57 @@ class ContigSequence():
         # data attributes
         self.query_id = query_id
         self.relatives = dict()
+        self.has_relatives = False
         self.num_hsps = Counter()
         self.seq = sequence
 
         # some annotation attributes
-        self.missing_start = False
-        self.missing_stop = False
-        self.full_length_orf = False
+        self.missing_start = None
+        self.missing_stop = None
+        self.full_length_orf = None
 
+    def __repr__(self):
+        """
+        Pretty print all info.
+        """
+
+        info = dict(id=self.query_id, length=self.query_length, num_relatives=len(self.relatives),
+                    consensus_frame=self.consensus_frame, majority_frame=self.majority_frame,
+                    any_frameshift=self.any_frameshift, majority_frameshift=self.majority_frameshift,
+                    missing_start=self.missing_start, missing_stop=self.missing_stop,
+                    likely_missing_5prime=self.likely_missing_5prime, full_length_orf=self.full_length_orf,
+                    orf_start = self.orf_start, orf_stop=self.orf_stop, seq=self.orf)
+        
+        out = Template("""
+ContigSequence element for ID: $id
+Length: $length
+Number of relatives: $num_relatives
+
+# Frames
+Consensus frame: $consensus_frame
+Majority frame: $majority_frame
+
+# Frameshift
+Any frameshift: $any_frameshift
+Majority frameshift: $majority_frameshift
+
+# ORF Integrity
+Missing start codon: $missing_start
+Missing stop codon: $missing_stop
+5'-end likely missing: $likely_missing_5prime
+
+# Predicted ORF
+ORF is full length: $full_length_orf
+ORF start: $orf_start
+ORF stop: $orf_stop
+ORF seq: $seq
+
+# Relatives Found
+""").substitute(info)
+
+        return out
+
+        
     def get_hsp_frames(self):
         """
         For each relative, count how the number of occurences of a
@@ -135,6 +185,8 @@ class ContigSequence():
         consensus (due to either differing HSP frames in a relative or
         differing relative hits) leads this to take the value of None.
         """
+        if not self.has_relatives:
+            return None
         return self.all_frames.keys()[0] if len(self.all_frames) == 1 else None
 
     @property
@@ -154,6 +206,9 @@ class ContigSequence():
         None when there is a consensus. We want majority=None to
         indicate a non-clear majority.
         """
+        if not self.has_relatives:
+            return None
+
         if self.consensus_frame is not None:
             return self.consensus_frame
         
@@ -176,22 +231,36 @@ class ContigSequence():
         Returns True of False indicating if there's a frameshift in
         the majority of relatives. We do not count relatives with one
         HSP as there isn't sufficient information.
+
+        True is returned if there's a tie.
         """
-        frameshifts = 0
-        num_relatives = len(self.frames)
+        if not self.has_relatives:
+            return None
+
+        frameshifts = Counter()
+
         for relative, frames in self.frames.iteritems():
-            # values corresponds to num HSPs per frame
+            # values corresponds to num HSPs per frame - less than 2,
+            # we don't have enough information to infer frameshift.
             if sum(frames.values()) < 2:
                 continue
-            if len(frames.keys()) > 1:
-                frameshifts += 1
-        return True if frameshifts/float(num_relatives) > 0.5 else False
+            frameshifts[len(frames.keys()) > 1] += 1
 
+        # handle corner case where there's a tie of zeros (not a
+        # frameshift).
+        if sum(frameshifts.values()) == 0:
+            return False
+
+        return frameshifts[True] >= frameshifts[False]
+                
     @property
     def any_frameshift(self):
         """
         Return if there are any relatives with frameshifts.
         """
+        if not self.has_relatives:
+            return None
+
         return any([len(c.keys()) > 1 for r, c in self.frames.iteritems()])
 
     
@@ -227,6 +296,9 @@ class ContigSequence():
         there's a consensus frame, we use its sign; if not, we use the
         majority. If neither exist, we don't calculate this.
         """
+        if not self.has_relatives:
+            return None
+
         self.start_tuples = dict()
         if self.majority_frame is not None:
             strand = self.majority_frame/abs(self.majority_frame)
@@ -243,6 +315,41 @@ class ContigSequence():
                     
                 self.start_tuples[relative] = most_5prime_tuple
 
+    @property
+    def likely_missing_5prime(self, qs_thresh=16, ss_thresh=40):
+        """
+        This is an important function: we look at the query/subject
+        start positions of the 5'most HSP. If the subject start is
+        late (and the query start is early), it probably means that
+        this contig is missing a 5'-end.
+
+        This is based on a majority count procedure. To be
+        conservative, ties go to "yes" - that the 5 prime is missing.
+
+        Defaults are chosen based on some test cases.
+        """
+        if not self.has_relatives:
+            return None
+
+        self.get_hsp_start_tuples()
+
+        missing_5prime = Counter()
+        
+        for relative, start_tuple in self.start_tuples.iteritems():
+            # note that for reverse strand: query_start is really
+            # query_end, but we compare it to the difference between
+            # query_end and query_length.
+            query_start, sbjct_start, strand = start_tuple
+            if strand > 0:
+                missing_5prime[query_start <= qs_thresh and sbjct_start >= ss_thresh] += 1
+            else:
+                missing_5prime[abs(query_start - self.query_length) <= qs_thresh and sbjct_start >= ss_thresh] += 1
+
+        if missing_5prime[True] >= missing_5prime[False]:
+            return True
+        return False
+
+
     def predict_orf(self):
         """
         Predict the ORF from the consensus or majority frame's largest
@@ -251,29 +358,61 @@ class ContigSequence():
         This also checks for a stop codon (valid 3'-end) and start
         codon.
         """
+        if not self.has_relatives:
+            return None
+
         frame = self.consensus_frame if self.consensus_frame is not None else self.majority_frame
 
         # if we can't predict the frame, we can't predict an ORF.
         if frame is None:
             return None
 
-        seq = put_seq_in_frame(self.seq.seq, frame) # TODO fix, do in join
+        seq = put_seq_in_frame(self.seq, frame)
 
-        start_codon_pos, stop_codon_pos = find_longest_orf(seq)
-        self.contains_start = start_codon_pos is not None
-        self.contains_stop = stop_codon_pos is not None
+
+        # General note: Be cautious when reading this section: there
+        # are two sets of positions: one relative to the sequence once
+        # put in frame, the other relative to the raw sequence.
+
+        # relative to sequence in frame; the "_if" refers to in frame
+        start_codon_pos_if, stop_codon_pos_if = find_longest_orf(seq)
+
+        # these are booleans indicating whether a valid start of stop
+        # found; useful if the orf_start orf_stop positions are set
+        # because they're the end of the sequence.
+        contains_start = start_codon_pos_if is not None
+        contains_stop = stop_codon_pos_if is not None
+
+        # find_longest_orf() works on the sequence already in the
+        # frame.  We need to put it back in the coordinates for the
+        # original sequence by adding abs(frame). The coordinates are
+        # relative to the original sequence. Also, find_longest_orf
+        # returns None if it cannot find a start or stop codon in the
+        # sequence in frame.
+        start_codon_pos = start_codon_pos_if + abs(frame) if start_codon_pos_if is not None else frame
+        stop_codon_pos = stop_codon_pos_if + abs(frame) - 1 if stop_codon_pos_if is not None else self.query_length
+
+        start_pos_if = start_codon_pos_if if start_codon_pos_if is not None else frame
+        stop_pos_if = stop_codon_pos_if if stop_codon_pos_if is not None else self.query_length
+        
+        # If start or stop positions found by find_longest_orf are
+        # None, this means that we should use the original sequence's
+        # start and stop position, adjusted for frame. Since these are
+        # sequence-relative, not sequence-in-frame relative, they make
+        # up the attributes.        
         self.orf_start = start_codon_pos
         self.orf_stop = stop_codon_pos
-        
-        if self.contains_start and self.contains_stop:
+        self.orf_pos = (self.orf_start, self.orf_stop)
+
+        if contains_start and contains_stop and not self.likely_missing_5prime:
             self.full_length_orf = True
-            self.orf = seq[start_codon_pos:stop_codon_pos]
-        elif self.contains_stop and not self.contains_start:
+            self.orf = seq[start_pos_if:stop_pos_if]
+        elif contains_stop and not contains_start:
             self.missing_start = True
-            self.orf = seq[:stop_codon_pos]
-        elif not self.contains_stop and self.contains_start:
+            self.orf = seq[:stop_pos_if]
+        elif not contains_stop and contains_start:
             self.missing_stop = True
-            self.orf = seq[start_codon_pos:]
+            self.orf = seq[start_pos_if:]
         else:
             self.orf = None
             self.missing_start_stop = True
@@ -284,6 +423,9 @@ class ContigSequence():
         A report method: print out how consistent the start subject
         sites are.
         """
+        if not self.has_relatives:
+            return None
+
         info_values = {}
         msg = Template("""
 ## ORF Start Prediction
@@ -304,6 +446,9 @@ Number of
         else:
             raise Exception, "relative '%s' already exists for this ContigSequence" % relative
 
+        self.has_relatives = True
+        
+
         self.query_length = blast_record.query_letters
         # TODO check: are these gauranteed in best first order?
         self.relatives[relative] = list()
@@ -321,6 +466,8 @@ Number of
             self.num_hsps[relative] += 1
                 
             self.relatives[relative].append(hsp_dict)
+
+
 
 def parse_blastx_args(args):
     """
@@ -364,42 +511,39 @@ def join_blastx_results(args):
     'relative' is the BLAST result file and the values are the BLAST
     results.
     """
+    # First we populate the results dictionary with all keys and None
+    # value, primarily to keep track of cases where we don't have any
+    # BLAST hits.
 
-    # first, we index the FASTA reference
-    ref_index = SeqIO.index(args.ref, "fasta")
-    # ref_ids = ref_index.keys()
+    results = dict()
+    for record in SeqIO.parse(args.ref, "fasta"):
+        results[record.id] = ContigSequence(record.id, record.seq)
 
     blast_files = parse_blastx_args(args.blastx)
 
-    results = dict()
-
     for relative, blast_file in blast_files.items():
-        
         sys.stderr.write("processing BLAST file '%s'...\t" % relative)
 
         for record in NCBIXML.parse(blast_file):
             query_id = record.query.strip().split()[0]
-            #pdb.set_trace()
-            # initialize a ContigSequence object for this query/contig
-            if not results.get(query_id, False):
-                results[query_id] = ContigSequence(query_id, ref_index[query_id])
 
             # add the relative's alignment information
             results[query_id].add_relative_alignment(relative, record)
 
         sys.stderr.write("done\n")
-        
+
+    # dump the joined results
     cPickle.dump(results, file=args.output)
 
-def calculate_subject_starts(contig_seqs):
-    rel_sbjct_starts = Counter()
-    abs_sbjct_starts = Counter()
+# def calculate_subject_starts(contig_seqs):
+#     rel_sbjct_starts = Counter()
+#     abs_sbjct_starts = Counter()
 
-    for contig_id, contig in contig_seqs.iteritems():
-        for start_tuple in contig.start_tuples.values():
-            rel_sbjct_starts[round(start_tuple[1]/float(contig.query_length), 2)] += 1
-            abs_sbjct_starts[start_tuple[1]] += 1
-    return {"rel_sbjct_starts":rel_sbjct_starts, "abs_sbjct_starts":abs_sbjct_starts}
+#     for contig_id, contig in contig_seqs.iteritems():
+#         for start_tuple in contig.start_tuples.values():
+#             rel_sbjct_starts[round(start_tuple[1]/float(contig.query_length), 2)] += 1
+#             abs_sbjct_starts[start_tuple[1]] += 1
+#     return {"rel_sbjct_starts":rel_sbjct_starts, "abs_sbjct_starts":abs_sbjct_starts}
 
 
 def predict_orf(args):
@@ -407,6 +551,8 @@ def predict_orf(args):
     
     """
     contig_seqs = cPickle.load(args.input)
+    num_no_relatives = 0
+    
     num_consensus_frames = 0
     num_majority_frames = 0
     num_hsps_different_frames = 0
@@ -415,6 +561,8 @@ def predict_orf(args):
     num_full_length_orf = 0
     num_missing_start = 0
     num_missing_stop = 0
+
+    num_likely_missing_5prime = 0
     total = 0
     
     for relative, cs in contig_seqs.iteritems():
@@ -422,14 +570,22 @@ def predict_orf(args):
         cs.get_hsp_frames()
         cs.get_hsp_start_tuples()
         cs.predict_orf()
+
+        # collect counts of various cases; note we use "is True", as
+        # values can be None (default) or False.
+
+        num_no_relatives += int(not cs.has_relatives)
+        
         num_consensus_frames += int(cs.consensus_frame is not None)
         num_majority_frames += int(cs.consensus_frame is None and cs.majority_frame is not None)
-        num_hsps_different_frames += int(cs.any_frameshift)
-        num_relatives_majority_frameshift += int(cs.majority_frameshift)
 
-        num_full_length_orf += int(cs.full_length_orf)
-        num_missing_start += int(cs.missing_start)
-        num_missing_stop += int(cs.missing_stop)
+        num_hsps_different_frames += int(cs.any_frameshift is True)
+        num_relatives_majority_frameshift += int(cs.majority_frameshift is True)
+
+        num_full_length_orf += int(cs.full_length_orf is True)
+        num_missing_start += int(cs.missing_start is True)
+        num_missing_stop += int(cs.missing_stop is True)
+        num_likely_missing_5prime += int(cs.likely_missing_5prime is True)
         
         total += 1
 
@@ -441,9 +597,12 @@ def predict_orf(args):
     print "number of full length ORFs:", num_full_length_orf
     print "number of missing start codons:", num_missing_start
     print "number of missing stop codons:", num_missing_stop
+    print "number of likely missing 5'-ends:", num_likely_missing_5prime
+    print
+    print "number *without* relatives (no BLAST hit):", num_no_relatives
     print "total:", total
 
-    return {'contig_seqs':contig_seqs, 'rel_starts':calculate_subject_starts(contig_seqs)}
+    return contig_seqs
 
 
 if __name__ == "__main__":

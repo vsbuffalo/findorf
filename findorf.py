@@ -17,16 +17,21 @@ TODO: is there a stop codon betwene the 5'-most HSP and the end of the
 sequence?
 
 k51_contig_10673
+
+k61_contig_20415 - problem detecting frameshift, not in BLAST results.
 """
 
 STOP_CODONS = ("TAG", "TGA", "TAA")
 START_CODONS = ("ATG")
+GTF_FIELDS = ["seqname", "source", "feature", "start", "end", "score", "strand", "frame", "group"]
 
 import sys
 import pdb
 import cPickle
+import csv
 from collections import Counter
 from string import Template
+from operator import itemgetter
 try:
     from Bio.Blast import NCBIXML
     from Bio.Alphabet import IUPAC, generic_dna, DNAAlphabet
@@ -51,6 +56,8 @@ def find_longest_orf(seq_in_frame):
 
     Note that longest ORF will *not* (of course) be from the earliest
     M to the latest stop codon, since this is not a proper ORF.
+
+    TODO: push each ORF on to a stack, take the longest.
     """
     seq = str(seq_in_frame)
 
@@ -58,7 +65,8 @@ def find_longest_orf(seq_in_frame):
     codons = [(seq[pos:pos+3], pos) for pos in range(0, len(seq), 3)]
     start_pos = None
     stop_pos = None
-    
+
+    orfs = list()
     for codon in codons:
         if start_pos is None and codon[0] in START_CODONS:
             start_pos = codon[1]
@@ -69,9 +77,14 @@ def find_longest_orf(seq_in_frame):
             # to first position of stop codon, but rather last
             # nucleotide in the ORF
             stop_pos = codon[1] - 1
-
-    return (start_pos, stop_pos)
-    
+        if start_pos is not None and stop_pos is not None:
+            orfs.append((start_pos, stop_pos, abs(stop_pos - start_pos)))
+            start_pos = None
+            stop_pos = None
+    #pdb.set_trace()
+    if not len(orfs):
+        return (None, None, None)
+    return sorted(orfs, key=itemgetter(2), reverse=True)[0]
 
 def put_seq_in_frame(seq, frame):
     """
@@ -100,12 +113,17 @@ class ContigSequence():
         self.has_relatives = False
         self.num_hsps = Counter()
         self.seq = sequence
-
+        self.query_length = len(sequence)
+        
         # some annotation attributes
         self.missing_start = None
         self.missing_stop = None
         self.full_length_orf = None
-
+        self.orf_start = None
+        self.orf_stop = None
+        self.orf=None
+        self.start_tuples = dict()
+        
     def __repr__(self):
         """
         Pretty print all info.
@@ -142,12 +160,54 @@ ORF start: $orf_start
 ORF stop: $orf_stop
 ORF seq: $seq
 
-# Relatives Found
+# Relatives Start Sites
 """).substitute(info)
 
+        for relative, start_tuple in self.start_tuples.iteritems():
+            sbjct_start, query_start, strand = start_tuple
+            rel_info = (relative, sbjct_start, query_start, {1:"+", -1:"-"}[strand])
+            out += ("%s\n    subject start: %s\n    query start/end"
+            " (if strand forward/reverse): %s\n    strand: %s\n" % rel_info)
+    
         return out
 
-        
+
+    def gff_dict(self):
+        """
+        Return a dictionary of the some key attribute's values, for
+        export to a file via the csv module.
+
+        Note that GFFs are 1-indexed, so we add one to positions.
+        """
+        out = dict()
+        out["seqname"] = self.query_id
+        out["source"] = "findorf"
+        out["feature"] = "predicted_orf"
+        out["start"] = self.orf_start + 1 if self.orf_start is not None else "."
+        out["end"] = self.orf_stop + 1 if self.orf_stop is not None else "."
+        out["score"] = "."
+        out["strand"] = self.majority_frame/abs(self.majority_frame) if self.majority_frame is not None else "."
+        out["frame"] = abs(self.majority_frame) - 1 if self.majority_frame is not None else "." # GFF uses frames in [0, 2]
+        out["group"] = "."
+        return out
+
+    def gtf_dict(self):
+        """
+        Output a GTF file, which carries attributes in the group
+        column.
+        """
+
+        attributes = dict(full_length_orf=self.full_length_orf,
+                          majority_frameshift=self.majority_frameshift,
+                          any_frameshift=self.any_frameshift,
+                          likely_missing_5prime=self.likely_missing_5prime,
+                          number_relatives=len(self.relatives))
+
+        group = "; ".join(["%s %s" % (k, v) for k, v in attributes.iteritems()])
+        out = self.gff_dict()
+        out["group"] = group
+        return out
+
     def get_hsp_frames(self):
         """
         For each relative, count how the number of occurences of a
@@ -299,7 +359,6 @@ ORF seq: $seq
         if not self.has_relatives:
             return None
 
-        self.start_tuples = dict()
         if self.majority_frame is not None:
             strand = self.majority_frame/abs(self.majority_frame)
             reverse = strand < 0 # higher query_start is the 5' most
@@ -375,7 +434,7 @@ ORF seq: $seq
         # put in frame, the other relative to the raw sequence.
 
         # relative to sequence in frame; the "_if" refers to in frame
-        start_codon_pos_if, stop_codon_pos_if = find_longest_orf(seq)
+        start_codon_pos_if, stop_codon_pos_if, orf_length = find_longest_orf(seq)
 
         # these are booleans indicating whether a valid start of stop
         # found; useful if the orf_start orf_stop positions are set
@@ -385,21 +444,23 @@ ORF seq: $seq
 
         # find_longest_orf() works on the sequence already in the
         # frame.  We need to put it back in the coordinates for the
-        # original sequence by adding abs(frame). The coordinates are
-        # relative to the original sequence. Also, find_longest_orf
-        # returns None if it cannot find a start or stop codon in the
-        # sequence in frame.
-        start_codon_pos = start_codon_pos_if + abs(frame) if start_codon_pos_if is not None else frame
-        stop_codon_pos = stop_codon_pos_if + abs(frame) - 1 if stop_codon_pos_if is not None else self.query_length
+        # original sequence by adding abs(frame-1) (- 1 accounts for
+        # difference between 1-indexed BLAST hits and 0-index Python
+        # strings). The coordinates are relative to the original
+        # sequence. Also, find_longest_orf returns None if it cannot
+        # find a start or stop codon in the sequence in frame.
+        start_codon_pos = start_codon_pos_if + abs(frame-1) if start_codon_pos_if is not None else frame
+        stop_codon_pos = stop_codon_pos_if + abs(frame-1) - 1 if stop_codon_pos_if is not None else self.query_length
 
+        # these are for slicing the sequence-in-frame
         start_pos_if = start_codon_pos_if if start_codon_pos_if is not None else frame
         stop_pos_if = stop_codon_pos_if if stop_codon_pos_if is not None else self.query_length
         
         # If start or stop positions found by find_longest_orf are
         # None, this means that we should use the original sequence's
         # start and stop position, adjusted for frame. Since these are
-        # sequence-relative, not sequence-in-frame relative, they make
-        # up the attributes.        
+        # sequence-relative, not sequence-in-frame-relative, they make
+        # up the attributes.
         self.orf_start = start_codon_pos
         self.orf_stop = stop_codon_pos
         self.orf_pos = (self.orf_start, self.orf_stop)
@@ -407,15 +468,20 @@ ORF seq: $seq
         if contains_start and contains_stop and not self.likely_missing_5prime:
             self.full_length_orf = True
             self.orf = seq[start_pos_if:stop_pos_if]
+            self.missing_start = False
+            self.missing_stop = False
         elif contains_stop and not contains_start:
             self.missing_start = True
+            self.missing_stop = False
             self.orf = seq[:stop_pos_if]
         elif not contains_stop and contains_start:
             self.missing_stop = True
+            self.missing_start = Fale
             self.orf = seq[start_pos_if:]
         else:
             self.orf = None
-            self.missing_start_stop = True
+            self.missing_start = True
+            self.missing_stop = True
 
         
     def report_first_hsp_starts(self):
@@ -449,7 +515,6 @@ Number of
         self.has_relatives = True
         
 
-        self.query_length = blast_record.query_letters
         # TODO check: are these gauranteed in best first order?
         self.relatives[relative] = list()
         best_alignment = blast_record.alignments[0]
@@ -466,8 +531,6 @@ Number of
             self.num_hsps[relative] += 1
                 
             self.relatives[relative].append(hsp_dict)
-
-
 
 def parse_blastx_args(args):
     """
@@ -535,17 +598,6 @@ def join_blastx_results(args):
     # dump the joined results
     cPickle.dump(results, file=args.output)
 
-# def calculate_subject_starts(contig_seqs):
-#     rel_sbjct_starts = Counter()
-#     abs_sbjct_starts = Counter()
-
-#     for contig_id, contig in contig_seqs.iteritems():
-#         for start_tuple in contig.start_tuples.values():
-#             rel_sbjct_starts[round(start_tuple[1]/float(contig.query_length), 2)] += 1
-#             abs_sbjct_starts[start_tuple[1]] += 1
-#     return {"rel_sbjct_starts":rel_sbjct_starts, "abs_sbjct_starts":abs_sbjct_starts}
-
-
 def predict_orf(args):
     """
     
@@ -600,7 +652,14 @@ def predict_orf(args):
     print "number of likely missing 5'-ends:", num_likely_missing_5prime
     print
     print "number *without* relatives (no BLAST hit):", num_no_relatives
+    print "number with relatives (has at least BLAST hit):", total - num_no_relatives
     print "total:", total
+
+    if args.gtf is not None:
+        with args.gtf as f:
+            dw = csv.DictWriter(f, GTF_FIELDS, delimiter="\t")
+            for cs in contig_seqs.values():
+                dw.writerow(cs.gtf_dict())
 
     return contig_seqs
 
@@ -626,6 +685,12 @@ if __name__ == "__main__":
     parser_predict.add_argument('--input', type=argparse.FileType('rb'),
                                 default="joined_blastx_dbs.pkl",
                                 help="the joined results of all BLASTX files (Python pickle file; from sub-command joined)")
+    parser_predict.add_argument('--gff', type=argparse.FileType('w'),
+                                default=None,
+                                help="filename of the GFF of ORF predictions")
+    parser_predict.add_argument('--gtf', type=argparse.FileType('w'),
+                                default=None,
+                                help="filename of the GTF of ORF predictions")
     parser_predict.add_argument('--full-length', action="store_true",
                                 help="the FASTA reference that corresponds to BLASTX queries.")
 

@@ -19,6 +19,10 @@ sequence?
 k51_contig_10673
 
 k61_contig_20415 - problem detecting frameshift, not in BLAST results.
+
+k26_contig_24653
+
+k26_contig_22146 - frameshift, but orf start/end
 """
 
 STOP_CODONS = ("TAG", "TGA", "TAA")
@@ -49,7 +53,7 @@ def mean(x):
     """
     return float(sum(x))/len(x) if len(x) > 0 else float('nan')
 
-def find_longest_orf(seq_in_frame):
+def find_longest_orf(seq_in_frame, missing_start=False):
     """
     Return the (start, stop) positions for the longest ORF, or None if
     one is not found.
@@ -63,7 +67,7 @@ def find_longest_orf(seq_in_frame):
 
     # these are in position order - TODO use namedtuple?
     codons = [(seq[pos:pos+3], pos) for pos in range(0, len(seq), 3)]
-    start_pos = None
+    start_pos = None if missing_start is False else 0
     stop_pos = None
 
     orfs = list()
@@ -141,7 +145,7 @@ ContigSequence element for ID: $id
 Length: $length
 Number of relatives: $num_relatives
 
-# Frames
+# Frames - these values are in [-3, -2, -1, 1, 2, 3]. GTF/GFF uses [0, 1, 2]
 Consensus frame: $consensus_frame
 Majority frame: $majority_frame
 
@@ -154,7 +158,7 @@ Missing start codon: $missing_start
 Missing stop codon: $missing_stop
 5'-end likely missing: $likely_missing_5prime
 
-# Predicted ORF
+# Predicted ORF - these values are 0-indexed
 ORF is full length: $full_length_orf
 ORF start: $orf_start
 ORF stop: $orf_stop
@@ -286,7 +290,7 @@ ORF seq: $seq
             return None
 
     @property
-    def majority_frameshift(self):
+    def old_majority_frameshift(self):
         """
         Returns True of False indicating if there's a frameshift in
         the majority of relatives. We do not count relatives with one
@@ -310,6 +314,58 @@ ORF seq: $seq
         # frameshift).
         if sum(frameshifts.values()) == 0:
             return False
+
+        return frameshifts[True] >= frameshifts[False]
+
+    @property
+    def frames_identities(self):
+        """
+        Count the number of identities (not HSPs, as in self.frames)
+        that are in a relative's HSPS.
+        """
+        
+        if not self.has_relatives:
+            return None
+
+        frames = dict()
+        for relative, hsps in self.relatives.iteritems():
+            frames[relative] = Counter()
+
+            # count the number of identities per each relative's HSP
+            for h in hsps:
+                # TODO check for other tuple elements?
+                f = h['frame'][0]
+                frames[relative][f] += h['identities']
+
+        return frames
+
+    @property
+    def majority_frameshift(self):
+        """
+        A refinement of what is now
+        old_majority_frameshift. old_majority_frameshift has problem
+        that hits in a relative that lead to one HSPs are not counted
+        in the majority decision. This unfairly penalized HSPs that
+        take up the entire query sequence.
+
+        Here, number of identities of each HSP are incorporated, such
+        that if the majority of total idenities are in relative's
+        alignment with an frameshift, we say it's a majority
+        frameshift. This is a finer-version than just looking at the
+        majority of relatives with frameshifts because it (1) takes it
+        account evolutionary distance implicitly and (2) means we
+        don't have to ignore relatives' alignents with only one HSP.
+
+        Note too that we don't have to use proporitions here because
+        we're only looking at the best alignment, which does not
+        differ in length across the relatives' blast results.
+        """
+        if not self.has_relatives:
+            return None
+
+        frameshifts = Counter()
+        for relative, frames in self.frames_identities.iteritems():
+            frameshifts[len(frames.keys()) > 1] += sum(frames.values())
 
         return frameshifts[True] >= frameshifts[False]
                 
@@ -434,7 +490,7 @@ ORF seq: $seq
         # put in frame, the other relative to the raw sequence.
 
         # relative to sequence in frame; the "_if" refers to in frame
-        start_codon_pos_if, stop_codon_pos_if, orf_length = find_longest_orf(seq)
+        start_codon_pos_if, stop_codon_pos_if, orf_length = find_longest_orf(seq, missing_start=self.likely_missing_5prime)
 
         # these are booleans indicating whether a valid start of stop
         # found; useful if the orf_start orf_stop positions are set
@@ -449,8 +505,8 @@ ORF seq: $seq
         # strings). The coordinates are relative to the original
         # sequence. Also, find_longest_orf returns None if it cannot
         # find a start or stop codon in the sequence in frame.
-        start_codon_pos = start_codon_pos_if + abs(frame-1) if start_codon_pos_if is not None else frame
-        stop_codon_pos = stop_codon_pos_if + abs(frame-1) - 1 if stop_codon_pos_if is not None else self.query_length
+        start_codon_pos = start_codon_pos_if + abs(frame) - 1 if start_codon_pos_if is not None else frame
+        stop_codon_pos = stop_codon_pos_if + abs(frame) - 1 if stop_codon_pos_if is not None else self.query_length
 
         # these are for slicing the sequence-in-frame
         start_pos_if = start_codon_pos_if if start_codon_pos_if is not None else frame

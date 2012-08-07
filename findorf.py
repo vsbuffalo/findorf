@@ -10,11 +10,28 @@ particular organism's protein database. With each of these relatives,
 the consensus ORF is found, and other attributes of the contig are
 added.
 
-Specifying blastx Results
+There are two primary operations of findorf.py:
+
+1. Join all the XML blastx results with the contig FASTA file.
+
+2. Predict ORFs and annotate contigs based on the data from the join
+operation.
+
+These are done seperately, since one may wish to change the parameters
+and output from the predict command without having to re-run the join
+operation.
 
 
-TODO: is there a stop codon betwene the 5'-most HSP and the end of the
+
+TODO
+
+1. Is there a stop codon between the 5'-most HSP and the end of the
 sequence?
+
+2. Use the first frame of a frameshifted contig to predict ORF.
+
+
+Strange cases:
 
 k51_contig_10673
 
@@ -53,39 +70,61 @@ def mean(x):
     """
     return float(sum(x))/len(x) if len(x) > 0 else float('nan')
 
-def find_longest_orf(seq_in_frame, missing_start=False):
+def get_orfs(seq_in_frame, missing_5prime=False):
     """
-    Return the (start, stop) positions for the longest ORF, or None if
-    one is not found.
+    Return the (start, stop) positions for all ORFs. If missing_5prime
+    is True, we start from the beginning of the sequence, not the
+    first start codon.
 
-    Note that longest ORF will *not* (of course) be from the earliest
-    M to the latest stop codon, since this is not a proper ORF.
+     - no start position (is None), but we hit a stop: appended as
+       (None, stop_pos, stop_pos)
 
-    TODO: push each ORF on to a stack, take the longest.
+     - no stop position (is None), but we hit end of sequence;
+       appended as (start_pos, None, sequence_length)
+
+     - start found, stop found: full length ORF, and continue
+       searching for others after this.
     """
+    # these are in position order - TODO use namedtuple?
+    # OrfSet = namedtuple('OrfSet', ['start', 'stop', ])
     seq = str(seq_in_frame)
 
-    # these are in position order - TODO use namedtuple?
     codons = [(seq[pos:pos+3], pos) for pos in range(0, len(seq), 3)]
-    start_pos = None if missing_start is False else 0
+    start_pos = None if missing_5prime is False else 0
     stop_pos = None
 
     orfs = list()
+    codon_num = 0
     for codon in codons:
         if start_pos is None and codon[0] in START_CODONS:
             start_pos = codon[1]
-        # note that we require start_pos is not None... we've must
-        # have already found a start codon
+        if start_pos is None and codon[0] in STOP_CODONS:
+            # we hit a STOP codon before a start codon; append to list
+            orfs.append((None, codon[1], codon[1], codon_num))
+            codon_num +=1 
         if stop_pos is None and codon[0] in STOP_CODONS and start_pos is not None:
-            # note that we subract 1 because we don't want beginning
+            # Stop codon found; we add the orf to the list and reset
+            # everything.
+            #
+            # note that we subtract 1 because we don't want beginning
             # to first position of stop codon, but rather last
             # nucleotide in the ORF
             stop_pos = codon[1] - 1
-        if start_pos is not None and stop_pos is not None:
-            orfs.append((start_pos, stop_pos, abs(stop_pos - start_pos)))
+            orfs.append((start_pos, stop_pos, abs(stop_pos - start_pos), codon_num))
+            codon_num += 1
             start_pos = None
             stop_pos = None
-    #pdb.set_trace()
+    # cleanup time: any ORF with a start codon without a stop codon
+    # needs to be appended too.
+    if start_pos is not None and stop_pos is None:
+        orfs.append((start_pos, stop_pos, abs(len(seq) - start_pos), codon_num))
+        codon_num += 1
+
+    return orfs
+        
+def find_longest_orf(seq_in_frame, missing_5prime=False):
+    orfs = get_orfs(seq_in_frame, missing_5prime)
+
     if not len(orfs):
         return (None, None, None)
     return sorted(orfs, key=itemgetter(2), reverse=True)[0]
@@ -111,10 +150,12 @@ class ContigSequence():
         """
         Initialize a ContigSequence via a BioPython SeqRecord.
         """
+        # configurations
+        self.e_value_thresh = None
+        
         # data attributes
         self.query_id = query_id
-        self.relatives = dict()
-        self.has_relatives = False
+        self.all_relatives = dict()
         self.num_hsps = Counter()
         self.seq = sequence
         self.query_length = len(sequence)
@@ -133,7 +174,7 @@ class ContigSequence():
         Pretty print all info.
         """
 
-        info = dict(id=self.query_id, length=self.query_length, num_relatives=len(self.relatives),
+        info = dict(id=self.query_id, length=self.query_length, num_relatives=self.num_relatives,
                     consensus_frame=self.consensus_frame, majority_frame=self.majority_frame,
                     any_frameshift=self.any_frameshift, majority_frameshift=self.majority_frameshift,
                     missing_start=self.missing_start, missing_stop=self.missing_stop,
@@ -172,9 +213,61 @@ ORF seq: $seq
             rel_info = (relative, sbjct_start, query_start, {1:"+", -1:"-"}[strand])
             out += ("%s\n    subject start: %s\n    query start/end"
             " (if strand forward/reverse): %s\n    strand: %s\n" % rel_info)
-    
+
+        # in later versions, we could use a templating engine...
+        if self.has_relatives:
+            out += "\n# Relative Identities in Frames\n"
+            for relative, count_frames in self.frames_identities.iteritems():
+                if len(counter_frames):
+                    out += "%s\n" % relative
+                for frame, identities in count_frames.iteritems():
+                    out += "  frame: %s\n  identities:  %s\n\n" % (frame, identities)
+                    
         return out
 
+    @property
+    def relatives(self):
+        """
+        self.all_relatives is propagated by add_relatives with all
+        relatives. findorf predict allows a user to specify an
+        e-value, so this property retuns only those items in
+        all_relatives with an e-value less than or equal to the
+        self.e_value_thresh attribute. If this attribute is None,
+        all_relatives is returned.
+        """
+        
+        if self.e_value_thresh is None:
+            return self.all_relatives
+
+        passed_thresh = dict()
+        for relative, hsps in self.all_relatives.items():
+            passed_thresh[relative] = [h for h in hsps if h['e'] <= self.e_value_thresh]
+
+        return passed_thresh
+    
+
+    @property
+    def num_relatives(self):
+        """
+        The number of relatives with HSPs.
+        """
+        num_relatives = len([_ for _, hsps in self.relatives.items() if len(hsps) > 0])
+        return num_relatives
+
+    @property
+    def max_identities(self):
+        """
+        Return the relatives, ordered by the number of identities.
+        """
+        if not self.has_relatives:
+            return None
+
+        identities = Counter()
+        for relative, hsps in self.relatives.iteritems():
+            for h in hsps:
+                identities[relative] += h["identities"]
+
+        return identities.most_common()
 
     def gff_dict(self):
         """
@@ -254,15 +347,12 @@ ORF seq: $seq
         return self.all_frames.keys()[0] if len(self.all_frames) == 1 else None
 
     @property
-    def majority_frame(self):
+    def relative_majority_frame(self):
         """
         The `majority_frame` attribute indicates the majority, based
         on the number of relatives that agree on a frame. We don't
-        take the number of HSPs, as one long, long HSP shouldn't be
-        counted less than many tiny HSPs (in the future, we may look
-        at number of identities in a frame). Majority across relatives
-        seems like the best approach. Note that relatives HSPs in
-        differing frames are *not* counted in the majority voting.
+        Note that relatives HSPs in differing frames are *not* counted
+        in the majority voting.
 
         Note that if there is a consensus_frame, majority_frame =
         consensus_frame. We need to do this because a consensus frame
@@ -290,7 +380,41 @@ ORF seq: $seq
             return None
 
     @property
-    def old_majority_frameshift(self):
+    def majority_frame(self):
+        """
+        The `majority_frame` attribute indicates the majority, based
+        on the number of *identities* that agree on a frame.
+
+        This has the advantage that longer HSPs are weighted more
+        heavily in the calculations. Furthermore, more distant
+        relatives will likely be more divergent in terms of protein
+        identity, so this provides a natural way of weighting by
+        evolutionary distance.
+
+        As with `relative_majority_frame`, if `majority_consensus`
+        frame is set, this will equal that.
+        """
+        if not self.has_relatives:
+            return None
+
+        if self.consensus_frame is not None:
+            return self.consensus_frame
+        
+        frames = Counter()
+        for relative, count_frames in self.frames_identities.iteritems():
+            if len(count_frames) == 1: # all HSPs agree (or there's just one)
+                only_frame = count_frames.keys()[0]
+                frames[only_frame] += count_frames.values()[0]
+
+        if len(frames):
+            # check if there is there a tie, set None if so
+            tie = len(set([c for frame, c in frames.most_common(2)])) == 1
+            return frames.most_common(1)[0][0] if not tie else None
+        else:
+            return None
+
+    @property
+    def relative_majority_frameshift(self):
         """
         Returns True of False indicating if there's a frameshift in
         the majority of relatives. We do not count relatives with one
@@ -343,10 +467,10 @@ ORF seq: $seq
     def majority_frameshift(self):
         """
         A refinement of what is now
-        old_majority_frameshift. old_majority_frameshift has problem
-        that hits in a relative that lead to one HSPs are not counted
-        in the majority decision. This unfairly penalized HSPs that
-        take up the entire query sequence.
+        relative_majority_frameshift. relative_majority_frameshift has
+        problem that hits in a relative that lead to one HSPs are not
+        counted in the majority decision. This unfairly penalized HSPs
+        that take up the entire query sequence.
 
         Here, number of identities of each HSP are incorporated, such
         that if the majority of total idenities are in relative's
@@ -367,6 +491,7 @@ ORF seq: $seq
         for relative, frames in self.frames_identities.iteritems():
             frameshifts[len(frames.keys()) > 1] += sum(frames.values())
 
+        self.frameshift_identities = frameshifts
         return frameshifts[True] >= frameshifts[False]
                 
     @property
@@ -421,6 +546,8 @@ ORF seq: $seq
                                  # when reverse strand
                                  
             for relative, hsps in self.relatives.iteritems():
+                if len(hsps) == 0:
+                    continue
                 if reverse:
                     most_5prime = sorted(hsps, key=lambda x: x['query_end'], reverse=True)[0]
                     most_5prime_tuple = (most_5prime['query_end'], most_5prime['sbjct_start'], strand)
@@ -484,13 +611,13 @@ ORF seq: $seq
 
         seq = put_seq_in_frame(self.seq, frame)
 
-
         # General note: Be cautious when reading this section: there
         # are two sets of positions: one relative to the sequence once
         # put in frame, the other relative to the raw sequence.
 
         # relative to sequence in frame; the "_if" refers to in frame
-        start_codon_pos_if, stop_codon_pos_if, orf_length = find_longest_orf(seq, missing_start=self.likely_missing_5prime)
+        tmp = find_longest_orf(seq, missing_5prime=self.likely_missing_5prime)
+        start_codon_pos_if, stop_codon_pos_if, orf_length, num = tmp
 
         # these are booleans indicating whether a valid start of stop
         # found; useful if the orf_start orf_stop positions are set
@@ -499,17 +626,17 @@ ORF seq: $seq
         contains_stop = stop_codon_pos_if is not None
 
         # find_longest_orf() works on the sequence already in the
-        # frame.  We need to put it back in the coordinates for the
+       # frame.  We need to put it back in the coordinates for the
         # original sequence by adding abs(frame-1) (- 1 accounts for
         # difference between 1-indexed BLAST hits and 0-index Python
         # strings). The coordinates are relative to the original
         # sequence. Also, find_longest_orf returns None if it cannot
         # find a start or stop codon in the sequence in frame.
-        start_codon_pos = start_codon_pos_if + abs(frame) - 1 if start_codon_pos_if is not None else frame
+        start_codon_pos = start_codon_pos_if + abs(frame) - 1 if start_codon_pos_if is not None else abs(frame)
         stop_codon_pos = stop_codon_pos_if + abs(frame) - 1 if stop_codon_pos_if is not None else self.query_length
 
         # these are for slicing the sequence-in-frame
-        start_pos_if = start_codon_pos_if if start_codon_pos_if is not None else frame
+        start_pos_if = start_codon_pos_if if start_codon_pos_if is not None else abs(frame)
         stop_pos_if = stop_codon_pos_if if stop_codon_pos_if is not None else self.query_length
         
         # If start or stop positions found by find_longest_orf are
@@ -524,20 +651,15 @@ ORF seq: $seq
         if contains_start and contains_stop and not self.likely_missing_5prime:
             self.full_length_orf = True
             self.orf = seq[start_pos_if:stop_pos_if]
-            self.missing_start = False
-            self.missing_stop = False
         elif contains_stop and not contains_start:
-            self.missing_start = True
-            self.missing_stop = False
             self.orf = seq[:stop_pos_if]
         elif not contains_stop and contains_start:
-            self.missing_stop = True
-            self.missing_start = Fale
             self.orf = seq[start_pos_if:]
         else:
             self.orf = None
-            self.missing_start = True
-            self.missing_stop = True
+
+        self.missing_start = not contains_start
+        self.missing_stop = not contains_stop
 
         
     def report_first_hsp_starts(self):
@@ -548,12 +670,19 @@ ORF seq: $seq
         if not self.has_relatives:
             return None
 
-        info_values = {}
+        info_values = dict()
         msg = Template("""
 ## ORF Start Prediction
 Number of relatives where query's earliest HSP starts at 1: $num_start_1/$num_rels
 Number of 
 """).substitute()
+
+    @property
+    def has_relatives(self):
+        """
+        Number of relatives > 0?
+        """
+        return self.num_relatives > 0
         
     def add_relative_alignment(self, relative, blast_record):
         """
@@ -561,18 +690,21 @@ Number of
         extract and store the relevant parts of the _best_ alignment
         only.
         """
-        relative_exists = self.relatives.get(relative, False)
+        relative_exists = self.all_relatives.get(relative, False)
 
         if not relative_exists:
-            self.relatives[relative] = dict()
+            self.all_relatives[relative] = dict()
         else:
             raise Exception, "relative '%s' already exists for this ContigSequence" % relative
 
-        self.has_relatives = True
-        
+        if len(blast_record.alignments) == 0:
+            # no alignments, so we dont have any info to add for this
+            # relative.
+            return 
+
+        self.all_relatives[relative] = list()
 
         # TODO check: are these gauranteed in best first order?
-        self.relatives[relative] = list()
         best_alignment = blast_record.alignments[0]
         for hsp in best_alignment.hsps:
             hsp_dict = {'align_length':best_alignment.length,
@@ -584,9 +716,10 @@ Number of
                         'query_end':hsp.query_end,
                         'sbjct_start':hsp.sbjct_start,
                         'sbjct_end':hsp.sbjct_end}
+            
             self.num_hsps[relative] += 1
-                
             self.relatives[relative].append(hsp_dict)
+                        
 
 def parse_blastx_args(args):
     """
@@ -601,7 +734,7 @@ def parse_blastx_args(args):
         if len(tmp) == 2:
             name, value = tmp
             if blastx_files.get(name, False):
-                msg = "key '%s' already exists in blastx args" % name
+                msg = "key '%s' dy exists in blastx args" % name
                 raise argparse.ArgumentTypeError(msg)
             blastx_files[name] = value
         elif len(tmp) == 1:
@@ -672,9 +805,14 @@ def predict_orf(args):
 
     num_likely_missing_5prime = 0
     total = 0
+
+    # let's sum all the identities to see who comes out on top
+    total_identities = Counter()
+
+    for id, cs in contig_seqs.iteritems():
+        # We set the e-value threshold based on the argument.
+        cs.e_value_thresh = args.e_value
     
-    for relative, cs in contig_seqs.iteritems():
-        #pdb.set_trace()
         cs.get_hsp_frames()
         cs.get_hsp_start_tuples()
         cs.predict_orf()
@@ -694,28 +832,50 @@ def predict_orf(args):
         num_missing_start += int(cs.missing_start is True)
         num_missing_stop += int(cs.missing_stop is True)
         num_likely_missing_5prime += int(cs.likely_missing_5prime is True)
+
+        if cs.max_identities is not None:
+            for relative, identities in cs.max_identities:
+                total_identities[relative] += identities
         
         total += 1
 
-    print "number of contigs with all relatives' frames agree:", num_consensus_frames
-    print "number of contigs where a majority of relatives' frames agree (but no consensus frame):", num_majority_frames
-    print "number of contigs with a relative with HSPs in different frames:", num_hsps_different_frames
-    print "number of contigs with a frameshift in the majority of relatives:", num_relatives_majority_frameshift
+    print "number *without* relatives (no BLAST hit):", num_no_relatives
+    print "number with relatives (has at least one BLAST hit):", total - num_no_relatives
+    print "total:", total
+    print
+    print "number of contigs where all relatives' frames agree:", num_consensus_frames
+    print "number of contigs where an identity-weighted majority of relatives' frames agree (but no consensus frame):", num_majority_frames
+    print "number of contigs with a possible frameshift (any relative's HSPs are in different frames):", num_hsps_different_frames
+    print "number of contigs with a very likely frameshift (majority of identities are in relatives with HSPs in different frames) :", num_relatives_majority_frameshift
     print
     print "number of full length ORFs:", num_full_length_orf
     print "number of missing start codons:", num_missing_start
     print "number of missing stop codons:", num_missing_stop
     print "number of likely missing 5'-ends:", num_likely_missing_5prime
+    print "total identities:", ' '.join(["%s: %s" % (rel, count) for rel, count in total_identities.most_common()])
     print
-    print "number *without* relatives (no BLAST hit):", num_no_relatives
-    print "number with relatives (has at least BLAST hit):", total - num_no_relatives
-    print "total:", total
 
+    # GTF and GFF output
     if args.gtf is not None:
         with args.gtf as f:
             dw = csv.DictWriter(f, GTF_FIELDS, delimiter="\t")
             for cs in contig_seqs.values():
                 dw.writerow(cs.gtf_dict())
+
+    if args.gff is not None:
+        with args.gff as f:
+            # same fields as GFF (since group just becomes lumped
+            # attributes with GTF)
+            dw = csv.DictWriter(f, GTF_FIELDS, delimiter="\t")
+            for cs in contig_seqs.values():
+                dw.writerow(cs.gff_dict())
+
+    if args.dense is not None:
+        with args.dense as f:
+            for cs in contig_seqs.values():
+                if cs.has_relatives:
+                    f.write("----------------%s" % str(cs))
+
 
     return contig_seqs
 
@@ -747,8 +907,14 @@ if __name__ == "__main__":
     parser_predict.add_argument('--gtf', type=argparse.FileType('w'),
                                 default=None,
                                 help="filename of the GTF of ORF predictions")
+    parser_predict.add_argument('--dense', type=argparse.FileType('w'),
+                                default=None,
+                                help="filename of the dense output file")
     parser_predict.add_argument('--full-length', action="store_true",
                                 help="the FASTA reference that corresponds to BLASTX queries.")
+    parser_predict.add_argument('-e', '--e-value', type=float,
+                                default=10e-3,
+                                help="e-value threshold (relative hit only include if less than this)")
 
     parser_predict.set_defaults(func=predict_orf)
 

@@ -1,4 +1,4 @@
-## findorf.py -- orf prediction and annotation
+# findorf.py -- orf prediction and annotation
 info = """
 findorf.py: ORF prediction and annotation via blastx results of close
   relatives.
@@ -33,6 +33,9 @@ sequence?
 
 Strange cases:
 
+k36_contig_9886 starts with a start codon, but has a missing 5'-end.
+
+k36_contig_9886
 k51_contig_10673
 
 k61_contig_20415 - problem detecting frameshift, not in BLAST results.
@@ -42,17 +45,13 @@ k26_contig_24653
 k26_contig_22146 - frameshift, but orf start/end
 """
 
-STOP_CODONS = ("TAG", "TGA", "TAA")
-START_CODONS = ("ATG")
-GTF_FIELDS = ["seqname", "source", "feature", "start", "end", "score", "strand", "frame", "group"]
-
 import sys
 import pdb
 import cPickle
 import csv
-from collections import Counter
+from collections import Counter, namedtuple
 from string import Template
-from operator import itemgetter
+from operator import itemgetter, attrgetter
 try:
     from Bio.Blast import NCBIXML
     from Bio.Alphabet import IUPAC, generic_dna, DNAAlphabet
@@ -63,6 +62,13 @@ except ImportError, e:
 
 import argparse
 import os
+
+### Preset Values
+OrfSet = namedtuple('OrfSet', ['start', 'stop', 'length', 'rank'])
+STOP_CODONS = set(("TAG", "TGA", "TAA"))
+START_CODONS = set(("ATG"))
+GTF_FIELDS = ("seqname", "source", "feature", "start", "end", "score", "strand", "frame", "group")
+
 
 def mean(x):
     """
@@ -76,32 +82,54 @@ def get_orfs(seq_in_frame, missing_5prime=False):
     is True, we start from the beginning of the sequence, not the
     first start codon.
 
-     - no start position (is None), but we hit a stop: appended as
-       (None, stop_pos, stop_pos)
+    Only ORFs falling under the following conditions are appended to
+    the list:
 
-     - no stop position (is None), but we hit end of sequence;
-       appended as (start_pos, None, sequence_length)
+     - full start and stop positions (i.e. both integers)
 
-     - start found, stop found: full length ORF, and continue
-       searching for others after this.
+     - 0 start position, if missing_5prime is True.
+
+     - start position, None stop position (i.e. started open reading
+       frame, hit end of sequence before stop codon)
+
+     - None start position, stop position (i.e. a possible ORF with
+       missing start).
+
+    Output tuples contain:
+
+     - start position
+     - stop position
+     - length
+     - rank (ordered position in the sequence)
     """
-    # these are in position order - TODO use namedtuple?
-    # OrfSet = namedtuple('OrfSet', ['start', 'stop', ])
-    seq = str(seq_in_frame)
+    seq = str(seq_in_frame).upper()
 
     codons = [(seq[pos:pos+3], pos) for pos in range(0, len(seq), 3)]
     start_pos = None if missing_5prime is False else 0
     stop_pos = None
 
     orfs = list()
-    codon_num = 0
+    rank = 0
+    hit_any_start = False
     for codon in codons:
         if start_pos is None and codon[0] in START_CODONS:
             start_pos = codon[1]
-        if start_pos is None and codon[0] in STOP_CODONS:
-            # we hit a STOP codon before a start codon; append to list
-            orfs.append((None, codon[1], codon[1], codon_num))
-            codon_num +=1 
+            hit_any_start = True
+        if start_pos is None and codon[0] in STOP_CODONS and not hit_any_start:
+            # we hit a STOP codon before a start codon; append to
+            # list. We are only concerned about these cases if we've
+            # never hit any start before; otherwise translation would
+            # have already stopped. That is, not only do we require
+            # start_pos to be None for this open reading frame, but
+            # that we never hit any start before, as this stop codon
+            # would have at the very least ended that.
+            #
+            # Note that we set hit_any_start to True because we're
+            # assuming if this ORF is the true ORF, the stop codon is
+            # missing.
+            orfs.append(OrfSet(None, codon[1], codon[1], rank))
+            hit_any_start = True
+            rank +=1 
         if stop_pos is None and codon[0] in STOP_CODONS and start_pos is not None:
             # Stop codon found; we add the orf to the list and reset
             # everything.
@@ -110,25 +138,19 @@ def get_orfs(seq_in_frame, missing_5prime=False):
             # to first position of stop codon, but rather last
             # nucleotide in the ORF
             stop_pos = codon[1] - 1
-            orfs.append((start_pos, stop_pos, abs(stop_pos - start_pos), codon_num))
-            codon_num += 1
+            orfs.append(OrfSet(start_pos, stop_pos, abs(stop_pos - start_pos), rank))
+            rank += 1
             start_pos = None
             stop_pos = None
+            hit_any_start = True
     # cleanup time: any ORF with a start codon without a stop codon
     # needs to be appended too.
     if start_pos is not None and stop_pos is None:
-        orfs.append((start_pos, stop_pos, abs(len(seq) - start_pos), codon_num))
-        codon_num += 1
+        orfs.append(OrfSet(start_pos, stop_pos, abs(len(seq) - start_pos), rank))
+        rank += 1
 
     return orfs
         
-def find_longest_orf(seq_in_frame, missing_5prime=False):
-    orfs = get_orfs(seq_in_frame, missing_5prime)
-
-    if not len(orfs):
-        return (None, None, None)
-    return sorted(orfs, key=itemgetter(2), reverse=True)[0]
-
 def put_seq_in_frame(seq, frame):
     """
     Take a sequence and transform it to into the correct frame.
@@ -178,7 +200,7 @@ class ContigSequence():
                     consensus_frame=self.consensus_frame, majority_frame=self.majority_frame,
                     any_frameshift=self.any_frameshift, majority_frameshift=self.majority_frameshift,
                     missing_start=self.missing_start, missing_stop=self.missing_stop,
-                    likely_missing_5prime=self.likely_missing_5prime, full_length_orf=self.full_length_orf,
+                    missing_5prime=self.missing_5prime, full_length_orf=self.full_length_orf,
                     orf_start = self.orf_start, orf_stop=self.orf_stop, seq=self.orf)
         
         out = Template("""
@@ -197,7 +219,7 @@ Majority frameshift: $majority_frameshift
 # ORF Integrity
 Missing start codon: $missing_start
 Missing stop codon: $missing_stop
-5'-end likely missing: $likely_missing_5prime
+5'-end likely missing: $missing_5prime
 
 # Predicted ORF - these values are 0-indexed
 ORF is full length: $full_length_orf
@@ -209,7 +231,7 @@ ORF seq: $seq
 """).substitute(info)
 
         for relative, start_tuple in self.start_tuples.iteritems():
-            sbjct_start, query_start, strand = start_tuple
+            query_start, sbjct_start, strand = start_tuple
             rel_info = (relative, sbjct_start, query_start, {1:"+", -1:"-"}[strand])
             out += ("%s\n    subject start: %s\n    query start/end"
             " (if strand forward/reverse): %s\n    strand: %s\n" % rel_info)
@@ -218,7 +240,7 @@ ORF seq: $seq
         if self.has_relatives:
             out += "\n# Relative Identities in Frames\n"
             for relative, count_frames in self.frames_identities.iteritems():
-                if len(counter_frames):
+                if len(count_frames):
                     out += "%s\n" % relative
                 for frame, identities in count_frames.iteritems():
                     out += "  frame: %s\n  identities:  %s\n\n" % (frame, identities)
@@ -297,7 +319,7 @@ ORF seq: $seq
         attributes = dict(full_length_orf=self.full_length_orf,
                           majority_frameshift=self.majority_frameshift,
                           any_frameshift=self.any_frameshift,
-                          likely_missing_5prime=self.likely_missing_5prime,
+                          missing_5prime=self.missing_5prime,
                           number_relatives=len(self.relatives))
 
         group = "; ".join(["%s %s" % (k, v) for k, v in attributes.iteritems()])
@@ -558,15 +580,30 @@ ORF seq: $seq
                 self.start_tuples[relative] = most_5prime_tuple
 
     @property
-    def likely_missing_5prime(self, qs_thresh=16, ss_thresh=40):
+    def missing_5prime(self, qs_thresh=16, ss_thresh=40):
         """
-        This is an important function: we look at the query/subject
-        start positions of the 5'most HSP. If the subject start is
-        late (and the query start is early), it probably means that
-        this contig is missing a 5'-end.
+        This attribute indicates where it's predicted that the 5'-end
+        of the contig is missing, inferred by whether most relatives
+        have an HSP in this region.
 
-        This is based on a majority count procedure. To be
-        conservative, ties go to "yes" - that the 5 prime is missing.
+        Each HSP has a query start and a subject start. A missing
+        5'-end would look like this (in the case that the HSP spans
+        the missing part):
+
+                 query start
+                    |   HSP
+                    |------------------------------------------| contig
+                    |||||||||||
+            |.......|---------| subject
+        subject
+        start
+
+
+        We infer missing 5'-end based on the query start position
+        (compared to a threshold, `qs_thresh`) and the subject start
+        position (`ss_thresh`). Starting late in the subject and early
+        in the query probably means we're missing part of a protein.
+        
 
         Defaults are chosen based on some test cases.
         """
@@ -591,33 +628,60 @@ ORF seq: $seq
             return True
         return False
 
+    def find_5prime_most_orf(self, seq_in_frame):
+        """
+        Find the 5'-most ORF that contains an HSPs.
+        """
+        orfs = get_orfs(seq_in_frame, missing_5prime=self.missing_5prime)
+        self.all_orfs = orfs
+        
+        if not len(orfs):
+            return (None, None, None, None)
+
+        full_orfs = [o for o in orfs if None not in o]
+        # Remove cases where there is no HSP in this ORF.
+        
+        if not len(full_orfs):
+            # we return the 5'-most orf
+            return sorted(orfs, key=attrgetter('start'))[0]
+
+        return sorted(full_orfs, key=attrgetter('start'))[0]
+
 
     def predict_orf(self):
         """
-        Predict the ORF from the consensus or majority frame's largest
-        ORF.
+        The `predict_orf` gathers all information to make an ORF
+        prediction and annotate this object with information about the
+        prediction.
 
-        This also checks for a stop codon (valid 3'-end) and start
-        codon.
+        This involves:
+
+        1. Frame prediction
+        
+        2. Predicting whether the 5'-end of the sequence is missing
+        from presence of HSPs.
+
+        3. Finding the 5'-most ORF that contains HSPs.
         """
+        # No relatives? Can't predict ORF
         if not self.has_relatives:
             return None
 
-        frame = self.consensus_frame if self.consensus_frame is not None else self.majority_frame
+        frame = self.majority_frame
 
-        # if we can't predict the frame, we can't predict an ORF.
+        # No frame? Can't predict an ORF. TODO handle frameshift?
         if frame is None:
             return None
 
-        seq = put_seq_in_frame(self.seq, frame)
+        seq_in_frame = put_seq_in_frame(self.seq, frame)
 
         # General note: Be cautious when reading this section: there
         # are two sets of positions: one relative to the sequence once
         # put in frame, the other relative to the raw sequence.
 
         # relative to sequence in frame; the "_if" refers to in frame
-        tmp = find_longest_orf(seq, missing_5prime=self.likely_missing_5prime)
-        start_codon_pos_if, stop_codon_pos_if, orf_length, num = tmp
+        tmp = self.find_5prime_most_orf(seq_in_frame)
+        start_codon_pos_if, stop_codon_pos_if, orf_length, rank = tmp
 
         # these are booleans indicating whether a valid start of stop
         # found; useful if the orf_start orf_stop positions are set
@@ -648,13 +712,13 @@ ORF seq: $seq
         self.orf_stop = stop_codon_pos
         self.orf_pos = (self.orf_start, self.orf_stop)
 
-        if contains_start and contains_stop and not self.likely_missing_5prime:
+        if contains_start and contains_stop and not self.missing_5prime:
             self.full_length_orf = True
-            self.orf = seq[start_pos_if:stop_pos_if]
+            self.orf = seq_in_frame[start_pos_if:stop_pos_if]
         elif contains_stop and not contains_start:
-            self.orf = seq[:stop_pos_if]
+            self.orf = seq_in_frame[:stop_pos_if]
         elif not contains_stop and contains_start:
-            self.orf = seq[start_pos_if:]
+            self.orf = seq_in_frame[start_pos_if:]
         else:
             self.orf = None
 
@@ -803,7 +867,7 @@ def predict_orf(args):
     num_missing_start = 0
     num_missing_stop = 0
 
-    num_likely_missing_5prime = 0
+    num_missing_5prime = 0
     total = 0
 
     # let's sum all the identities to see who comes out on top
@@ -831,7 +895,7 @@ def predict_orf(args):
         num_full_length_orf += int(cs.full_length_orf is True)
         num_missing_start += int(cs.missing_start is True)
         num_missing_stop += int(cs.missing_stop is True)
-        num_likely_missing_5prime += int(cs.likely_missing_5prime is True)
+        num_missing_5prime += int(cs.missing_5prime is True)
 
         if cs.max_identities is not None:
             for relative, identities in cs.max_identities:
@@ -851,7 +915,7 @@ def predict_orf(args):
     print "number of full length ORFs:", num_full_length_orf
     print "number of missing start codons:", num_missing_start
     print "number of missing stop codons:", num_missing_stop
-    print "number of likely missing 5'-ends:", num_likely_missing_5prime
+    print "number of likely missing 5'-ends:", num_missing_5prime
     print "total identities:", ' '.join(["%s: %s" % (rel, count) for rel, count in total_identities.most_common()])
     print
 

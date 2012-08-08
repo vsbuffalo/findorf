@@ -30,10 +30,14 @@ sequence?
 
 2. Use the first frame of a frameshifted contig to predict ORF.
 
+3. If there's a stop codon in in from the contig start to the query start, we ignore it.
 
 Strange cases:
 
 k36_contig_9886 starts with a start codon, but has a missing 5'-end.
+
+k21_contig_36350: has a stop codon in first codon and missing 5'-end
+
 
 k36_contig_9886
 k51_contig_10673
@@ -59,16 +63,13 @@ try:
     from Bio.Seq import Seq
 except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
-
 import argparse
 import os
 
-### Preset Values
-OrfSet = namedtuple('OrfSet', ['start', 'stop', 'length', 'rank'])
-STOP_CODONS = set(("TAG", "TGA", "TAA"))
-START_CODONS = set(("ATG"))
-GTF_FIELDS = ("seqname", "source", "feature", "start", "end", "score", "strand", "frame", "group")
+from sequtils import STOP_CODONS, START_CODONS, GTF_FIELDS
+from sequtils import get_codons
 
+OrfSet = namedtuple('OrfSet', ['start', 'stop', 'length', 'rank'])
 
 def mean(x):
     """
@@ -102,53 +103,48 @@ def get_orfs(seq_in_frame, missing_5prime=False):
      - length
      - rank (ordered position in the sequence)
     """
+    # Make a list of the codonsb
     seq = str(seq_in_frame).upper()
+    codons = get_codons(seq)
 
-    codons = [(seq[pos:pos+3], pos) for pos in range(0, len(seq), 3)]
-    start_pos = None if missing_5prime is False else 0
+    # Initialize values
+    start_pos = None if not missing_5prime else 0
     stop_pos = None
-
     orfs = list()
     rank = 0
-    hit_any_start = False
-    for codon in codons:
-        if start_pos is None and codon[0] in START_CODONS:
-            start_pos = codon[1]
-            hit_any_start = True
-        if start_pos is None and codon[0] in STOP_CODONS and not hit_any_start:
-            # we hit a STOP codon before a start codon; append to
-            # list. We are only concerned about these cases if we've
-            # never hit any start before; otherwise translation would
-            # have already stopped. That is, not only do we require
-            # start_pos to be None for this open reading frame, but
-            # that we never hit any start before, as this stop codon
-            # would have at the very least ended that.
-            #
-            # Note that we set hit_any_start to True because we're
-            # assuming if this ORF is the true ORF, the stop codon is
-            # missing.
-            orfs.append(OrfSet(None, codon[1], codon[1], rank))
-            hit_any_start = True
-            rank +=1 
-        if stop_pos is None and codon[0] in STOP_CODONS and start_pos is not None:
-            # Stop codon found; we add the orf to the list and reset
-            # everything.
-            #
-            # note that we subtract 1 because we don't want beginning
-            # to first position of stop codon, but rather last
-            # nucleotide in the ORF
-            stop_pos = codon[1] - 1
-            orfs.append(OrfSet(start_pos, stop_pos, abs(stop_pos - start_pos), rank))
+    reading = missing_5prime # if we have a missing 5'-end, we assume
+                             # we are reading.
+    found_any_stop_codon = False
+
+    # for the most part, this loop should function like a ribosome
+    # would, except for the possibility that it will add two special
+    # cases: missing start codon but hit stop codon, and missing stop
+    # codon after hitting a stard codon.
+    # Todo: add non-missing 5'-end and 
+    for codon, pos in codons:
+        if not reading and codon in START_CODONS:
+            start_pos = pos
+            reading = True
+        if not reading and codon in STOP_CODONS and not found_any_stop_codon:
+            # we've found our first stop codon, which could indicate
+            # an ORF with a stop codon outside of the assembled contig
+            orfs.append(OrfSet(None, pos, pos, rank))
             rank += 1
+            found_any_stop_codon = True
+        if reading and codon in STOP_CODONS and not found_any_stop_codon:
+            stop_pos = pos
+            orf_length = stop_pos - start_pos
+            assert(orf_length >= 0)
+            orfs.append(OrfSet(start_pos, stop_pos, orf_length, rank))
+            rank += 1
+            reading = False
             start_pos = None
             stop_pos = None
-            hit_any_start = True
-    # cleanup time: any ORF with a start codon without a stop codon
-    # needs to be appended too.
-    if start_pos is not None and stop_pos is None:
-        orfs.append(OrfSet(start_pos, stop_pos, abs(len(seq) - start_pos), rank))
-        rank += 1
-
+            found_any_stop_codon = True
+    if reading:
+        orf_length = len(seq) - start_pos
+        orfs.append(OrfSet(start_pos, stop_pos, orf_length, rank))
+    
     return orfs
         
 def put_seq_in_frame(seq, frame):

@@ -21,32 +21,10 @@ These are done seperately, since one may wish to change the parameters
 and output from the predict command without having to re-run the join
 operation.
 
-
-
-TODO
-
-1. Is there a stop codon between the 5'-most HSP and the end of the
-sequence?
-
-2. Use the first frame of a frameshifted contig to predict ORF.
-
-3. If there's a stop codon in in from the contig start to the query start, we ignore it.
-
-Strange cases:
-
-k36_contig_9886 starts with a start codon, but has a missing 5'-end.
-
-k21_contig_36350: has a stop codon in first codon and missing 5'-end
-
-
-k36_contig_9886
-k51_contig_10673
-
-k61_contig_20415 - problem detecting frameshift, not in BLAST results.
-
-k26_contig_24653
-
-k26_contig_22146 - frameshift, but orf start/end
+A ContigSequence is an object that summarizes the contig sequence and
+relatives' information (from blastx). The `rules` module is a set of
+functions applied to these objects, and some rules will require that
+specific attributes of the ContigSequence be propagated.
 """
 
 import sys
@@ -67,8 +45,10 @@ import argparse
 import os
 
 from sequtils import STOP_CODONS, START_CODONS, GTF_FIELDS
-from sequtils import get_codons
+from sequtils import get_codons, put_seq_in_frame
+import templates
 
+## Named Tuples for lightweight object storage
 OrfSet = namedtuple('OrfSet', ['start', 'stop', 'length', 'rank'])
 
 def mean(x):
@@ -77,87 +57,6 @@ def mean(x):
     """
     return float(sum(x))/len(x) if len(x) > 0 else float('nan')
 
-def get_orfs(seq_in_frame, missing_5prime=False):
-    """
-    Return the (start, stop) positions for all ORFs. If missing_5prime
-    is True, we start from the beginning of the sequence, not the
-    first start codon.
-
-    Only ORFs falling under the following conditions are appended to
-    the list:
-
-     - full start and stop positions (i.e. both integers)
-
-     - 0 start position, if missing_5prime is True.
-
-     - start position, None stop position (i.e. started open reading
-       frame, hit end of sequence before stop codon)
-
-     - None start position, stop position (i.e. a possible ORF with
-       missing start).
-
-    Output tuples contain:
-
-     - start position
-     - stop position
-     - length
-     - rank (ordered position in the sequence)
-    """
-    # Make a list of the codonsb
-    seq = str(seq_in_frame).upper()
-    codons = get_codons(seq)
-
-    # Initialize values
-    start_pos = None if not missing_5prime else 0
-    stop_pos = None
-    orfs = list()
-    rank = 0
-    reading = missing_5prime # if we have a missing 5'-end, we assume
-                             # we are reading.
-    found_any_stop_codon = False
-
-    # for the most part, this loop should function like a ribosome
-    # would, except for the possibility that it will add two special
-    # cases: missing start codon but hit stop codon, and missing stop
-    # codon after hitting a stard codon.
-    # Todo: add non-missing 5'-end and 
-    for codon, pos in codons:
-        if not reading and codon in START_CODONS:
-            start_pos = pos
-            reading = True
-        if not reading and codon in STOP_CODONS and not found_any_stop_codon:
-            # we've found our first stop codon, which could indicate
-            # an ORF with a stop codon outside of the assembled contig
-            orfs.append(OrfSet(None, pos, pos, rank))
-            rank += 1
-            found_any_stop_codon = True
-        if reading and codon in STOP_CODONS and not found_any_stop_codon:
-            stop_pos = pos
-            orf_length = stop_pos - start_pos
-            assert(orf_length >= 0)
-            orfs.append(OrfSet(start_pos, stop_pos, orf_length, rank))
-            rank += 1
-            reading = False
-            start_pos = None
-            stop_pos = None
-            found_any_stop_codon = True
-    if reading:
-        orf_length = len(seq) - start_pos
-        orfs.append(OrfSet(start_pos, stop_pos, orf_length, rank))
-    
-    return orfs
-        
-def put_seq_in_frame(seq, frame):
-    """
-    Take a sequence and transform it to into the correct frame.
-    """
-    if frame < 0:
-        seq = seq.reverse_complement()
-        frame = -1*frame
-    if not frame in range(1, 4):
-        raise Exception, "improper frame: frame must be in [1, 3]"
-    return seq[(frame-1):]
-    
 class ContigSequence():
     """
     A ContigSequence is an assembled contig, that may be coding or
@@ -199,32 +98,7 @@ class ContigSequence():
                     missing_5prime=self.missing_5prime, full_length_orf=self.full_length_orf,
                     orf_start = self.orf_start, orf_stop=self.orf_stop, seq=self.orf)
         
-        out = Template("""
-ContigSequence element for ID: $id
-Length: $length
-Number of relatives: $num_relatives
-
-# Frames - these values are in [-3, -2, -1, 1, 2, 3]. GTF/GFF uses [0, 1, 2]
-Consensus frame: $consensus_frame
-Majority frame: $majority_frame
-
-# Frameshift
-Any frameshift: $any_frameshift
-Majority frameshift: $majority_frameshift
-
-# ORF Integrity
-Missing start codon: $missing_start
-Missing stop codon: $missing_stop
-5'-end likely missing: $missing_5prime
-
-# Predicted ORF - these values are 0-indexed
-ORF is full length: $full_length_orf
-ORF start: $orf_start
-ORF stop: $orf_stop
-ORF seq: $seq
-
-# Relatives Start Sites
-""").substitute(info)
+        out = Template(templates.contig_seq_repr).substitute(info)
 
         for relative, start_tuple in self.start_tuples.iteritems():
             query_start, sbjct_start, strand = start_tuple
@@ -643,99 +517,6 @@ ORF seq: $seq
 
         return sorted(full_orfs, key=attrgetter('start'))[0]
 
-
-    def predict_orf(self):
-        """
-        The `predict_orf` gathers all information to make an ORF
-        prediction and annotate this object with information about the
-        prediction.
-
-        This involves:
-
-        1. Frame prediction
-        
-        2. Predicting whether the 5'-end of the sequence is missing
-        from presence of HSPs.
-
-        3. Finding the 5'-most ORF that contains HSPs.
-        """
-        # No relatives? Can't predict ORF
-        if not self.has_relatives:
-            return None
-
-        frame = self.majority_frame
-
-        # No frame? Can't predict an ORF. TODO handle frameshift?
-        if frame is None:
-            return None
-
-        seq_in_frame = put_seq_in_frame(self.seq, frame)
-
-        # General note: Be cautious when reading this section: there
-        # are two sets of positions: one relative to the sequence once
-        # put in frame, the other relative to the raw sequence.
-
-        # relative to sequence in frame; the "_if" refers to in frame
-        tmp = self.find_5prime_most_orf(seq_in_frame)
-        start_codon_pos_if, stop_codon_pos_if, orf_length, rank = tmp
-
-        # these are booleans indicating whether a valid start of stop
-        # found; useful if the orf_start orf_stop positions are set
-        # because they're the end of the sequence.
-        contains_start = start_codon_pos_if is not None
-        contains_stop = stop_codon_pos_if is not None
-
-        # find_longest_orf() works on the sequence already in the
-       # frame.  We need to put it back in the coordinates for the
-        # original sequence by adding abs(frame-1) (- 1 accounts for
-        # difference between 1-indexed BLAST hits and 0-index Python
-        # strings). The coordinates are relative to the original
-        # sequence. Also, find_longest_orf returns None if it cannot
-        # find a start or stop codon in the sequence in frame.
-        start_codon_pos = start_codon_pos_if + abs(frame) - 1 if start_codon_pos_if is not None else abs(frame)
-        stop_codon_pos = stop_codon_pos_if + abs(frame) - 1 if stop_codon_pos_if is not None else self.query_length
-
-        # these are for slicing the sequence-in-frame
-        start_pos_if = start_codon_pos_if if start_codon_pos_if is not None else abs(frame)
-        stop_pos_if = stop_codon_pos_if if stop_codon_pos_if is not None else self.query_length
-        
-        # If start or stop positions found by find_longest_orf are
-        # None, this means that we should use the original sequence's
-        # start and stop position, adjusted for frame. Since these are
-        # sequence-relative, not sequence-in-frame-relative, they make
-        # up the attributes.
-        self.orf_start = start_codon_pos
-        self.orf_stop = stop_codon_pos
-        self.orf_pos = (self.orf_start, self.orf_stop)
-
-        if contains_start and contains_stop and not self.missing_5prime:
-            self.full_length_orf = True
-            self.orf = seq_in_frame[start_pos_if:stop_pos_if]
-        elif contains_stop and not contains_start:
-            self.orf = seq_in_frame[:stop_pos_if]
-        elif not contains_stop and contains_start:
-            self.orf = seq_in_frame[start_pos_if:]
-        else:
-            self.orf = None
-
-        self.missing_start = not contains_start
-        self.missing_stop = not contains_stop
-
-        
-    def report_first_hsp_starts(self):
-        """
-        A report method: print out how consistent the start subject
-        sites are.
-        """
-        if not self.has_relatives:
-            return None
-
-        info_values = dict()
-        msg = Template("""
-## ORF Start Prediction
-Number of relatives where query's earliest HSP starts at 1: $num_start_1/$num_rels
-Number of 
-""").substitute()
 
     @property
     def has_relatives(self):

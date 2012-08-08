@@ -33,3 +33,18 @@ def find_all_starts(codons):
         if codon_tuple[0].upper() in START_CODONS:
             start_codons.append(codon_tuple)
     return start_codons
+
+def put_seq_in_frame(seq, frame):
+    """
+    Take a sequence (of Bio.Seq class) and transform it to into the correct frame.
+    """
+    if frame < 0:
+        try:
+            seq = seq.reverse_complement()
+        except AttributeError:
+            raise AttributeError, "no reverse_complement() method; 'seq' must of class Bio.Seq.Seq"
+        frame = -1*frame
+    if not frame in range(1, 4):
+        raise Exception, "improper frame: frame must be in [1, 3]"
+    return seq[(frame-1):]
+    

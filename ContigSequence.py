@@ -312,7 +312,8 @@ class ContigSequence():
         """
         # TODO add unit tests for this.
 
-        AnchorHSPs = namedtuple('AnchorHSPs', ['most_5prime', 'most_3prime', 'strand'])
+        AnchorHSPs = namedtuple('AnchorHSPs',
+                                ['most_5prime', 'most_3prime', 'strand'])
         anchor_hsps = dict()
         strand = -1 if self.is_reversed else 1
         

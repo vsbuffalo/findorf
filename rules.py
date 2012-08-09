@@ -20,7 +20,7 @@ STOP_CODONS = set(["TAG", "TGA", "TAA"])
 START_CODONS = set(["ATG"])
 
 ## Predefined tuple structures
-orf_fields = ['start', 'stop', 'orf']
+orf_fields = ['start', 'stop', 'frame']
 PredictedORF = namedtuple("PredictedORF", orf_fields)
 
 
@@ -47,43 +47,66 @@ def put_seq_in_frame(seq, frame):
         raise Exception, "improper frame: frame must be in [1, 3]"
     return seq[(frame-1):]
 
-def contains_internal_stop_codon(cs):
-    """
-    """
-    pass
 
-def predict_ORF_frameshift(cs):
+def put_HSP_on_foward_strand(hsp, query_length):
     """
-    Predict an ORF in the case that we have a frameshift mutation. In
-    this case, we can't rule out the possibility that our protein is
-    real in the first frame, so we use the 5'-most frame and start
-    finding from there.
+    Take an HSP and return it on the forward strand.
+
+    
+    If a blastx HSP is reverse complemented to the subject sequence,
+    the 5'-most amino acid is the query end and the 3'-most amino acid
+    is the query start.
+
+    TODO: unit test this.
+    """
+
+    if hsp.frame > 0:
+        # already on forward strand
+        return hsp
+
+    hsp = HSP(e=hsp.expect,
+              identities=hsp.identities,
+              length=hsp.length,
+              percent_identity=hsp.percent_identity,
+              title=hsp.title,
+              query_start=query_length - hsp.query_end + 1,
+              query_end=query_length - hsp.query_start + 1,
+              sbjct_start=hsp.sbjct_start,
+              sbjct_end=hsp.sbjct_end,
+              frame=hsp.frame)
+
+    return hsp
+
+def contains_internal_stop_codon(cs, predicted_orf):
+    """
+    After we make an ORF prediction (the 5'-most ORF), we want to
+    check that we don't have an HSP more 3' than our ORF stop
+    position, which would indicate a disrupted protein (which could
+    still be functional or a pseudogene).
+
+    TODO: unit test
+    """
+
+    anchor_hsps = cs.get_anchor_HSPs(e_value, pi_range)
+    most_3prime = anchor_hsps.most_3prime
+
+
+    if most_3prime.strand < 0:
+        most_3prime = put_HSP_on_foward_strand(most_3prime)
+
+    return most_3prime.query_start > predicted_orf.stop:
+
+
+def get_all_ORFs(codons, in_reading_frame=False):
+    """
+    Generic ORF finder; it returns a list of all ORFs as they are
+    found, given codons (a list if tuples in the form (codon,
+    position)) from `get_codons`.
     
     """
-    pass
-
-def predict_ORF_missing_5prime(cs):
-    """
-    Predict an ORF in the case that we have a missing 5'-end.
-
-    """
-    pass
-
-def predict_ORF_vanilla(cs):
-    """
     
-
-    """
-    seq = cs.seq
-    frame = cs.majority_frame
-    
-    seq_in_frame = str(put_seq_in_frame(seq, frame))
-    codons = get_codons(seq_in_frame)
-
     all_orfs = list()
     start_pos = None
-    position = None    
-    in_reading_frame = False
     for codon, position in codons:
         if codon in START_CODONS and not in_reading_frame:
             in_reading_frame = True
@@ -96,10 +119,84 @@ def predict_ORF_vanilla(cs):
     if in_reading_frame:
         all_orfs.append((start_pos, position))
 
+    return all_orfs
+
+
+def predict_ORF_frameshift(cs, e_value=None, pi_range=None):
+    """
+    Predict an ORF in the case that we have a frameshift mutation. In
+    this case, we can't rule out the possibility that our protein is
+    real in the first frame, so we use the 5'-most frame and start
+    finding from there. If there's a missing 5'-end we dispatch to
+    `get_all_ORFs` as `predict_ORF_missing_5prime` would.
+    
+    """
+    anchor_hsps = cs.get_anchor_HSPs(e_value, pi_range)
+    most_5prime = anchor_hsps.most_5prime
+    frame_5prime_hsp = most_5prime.frame
+
+    seq_in_frame = str(put_seq_in_frame(seq, frame_5prime_hsp))
+    codons = get_codons(seq_in_frame)
+
+    missing_5prime = cs.missing_5prime(anchor_hsps):
+
+    # missing 5'-end so we're assuming we're already reading.
+    all_orfs = get_all_ORFs(codons, missing_5prime)
+    
+    if not len(all_orfs):
+        return PredictedORF(None, None, None)
+
+    best_start, best_stop = all_orfs[0]
+    return PredictedORF(best_start, best_stop, frame_5prime_hsp)
+
+    
+
+def predict_ORF_missing_5prime(cs):
+    """
+    Predict an ORF in the case that we have a missing 5'-end.
+
+    We trust relatives' information here, using the 5'-most HSP. Since
+    we assume the 5'-end is missing, we just read until we hit a stop
+    codon.
+
+    Note that there is an interesting exception here: if a stop codon
+    exists because this is a pseudogene. We have to refer to
+    information about the HSP's 3'-end for this.
+    
+    """
+
+    seq = cs.seq
+    frame = cs.majority_frame
+
+    seq_in_frame = str(put_seq_in_frame(seq, frame))
+    codons = get_codons(seq_in_frame)
+
+    all_orfs = get_all_ORFs(codons, in_reading_frame=True)
+
+    if not len(all_orfs):
+        return PredictedORF(None, None, None)
+
+    best_start, best_stop = all_orfs[0]
+    return PredictedORF(best_start, best_stop, frame)    
+
+
+def predict_ORF_vanilla(cs):
+    """
+    
+
+    """
+    seq = cs.seq
+    frame = cs.majority_frame
+    
+    seq_in_frame = str(put_seq_in_frame(seq, frame))
+    codons = get_codons(seq_in_frame)
+
+    all_orfs = get_all_ORFs(codons, in_reading_frame=False)
+    
     # first ORF is 5'-most
     if not len(all_orfs):
         return PredictedORF(None, None, None)
     
     best_start, best_stop = all_orfs[0]
-    return PredictedORF(best_start, best_stop, None)
+    return PredictedORF(best_start, best_stop, frame)
 

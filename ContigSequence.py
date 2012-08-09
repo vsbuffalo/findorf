@@ -228,7 +228,9 @@ class ContigSequence():
         """
         Calculate and return the identity counts by relative and
         frame. This is used for both frameshift and any_frameshift.
+
         """
+
         frame_counts = defaultdict(Counter)
         for relative, hsps in self.all_relatives.iteritems():
             # count the number of identities per each relative's HSP
@@ -238,6 +240,31 @@ class ContigSequence():
 
         return frame_counts
 
+    @property
+    def majority_frame(self):
+        """
+        The `majority_frame` attribute indicates the majority, based
+        on the number of *identities* that agree on a frame.
+        
+        This has the advantage that longer HSPs are weighted more
+        heavily in the calculations. Furthermore, more distant
+        relatives will likely be more divergent in terms of protein
+        identity, so this provides a natural way of weighting by
+        evolutionary distance.
+        """
+        if not self.has_relatives:
+            return None
+
+        frame = Counter()
+        for relative, counts in self.frames.items():
+            if len(counts) == 1:
+                # no frameshifts in this relative
+                frame[counts.keys()[0]] += sum(counts.values())
+
+        majority_frame, count = frame.most_common(1)[0]
+        return majority_frame
+                
+                
     @property
     def majority_frameshift(self):
         """
@@ -266,4 +293,87 @@ class ContigSequence():
     
         return any([len(c.keys()) > 1 for r, c in self.frames.iteritems()])
 
+    @property
+    def is_reversed(self):
+        """
+        Return True of the query is reversed.
+        
+        """
+        if not self.has_relatives:
+            return None
+
+        return self.majority_frame < 0        
+
+    def get_anchor_HSPs(self, e_value=None, pi_range=None):
+        """
+        Get the 5'-most and 3'-most HSPs for each relative and put
+        them in a tuple.
+
+        Note that we have to take into account that a query that
+        mapped in the reverse complemented configuration must be
+        flipped for calculating this. In this case, the `query_end`,
+        must be minimized, not the `query_subject`.
+        """
+        # TODO add unit tests for this.
+
+        AnchorHSPs = namedtuple('AnchorHSPs', ['most_5prime', 'most_3prime', 'strand'])
+        anchor_hsps = dict()
+        strand = -1 if self.is_reversed else 1
+        
+        for relative, hsps in self.get_relatives(e_value, pi_range).items():
+            hsp_1 = sorted(hsps, key=attrgetter('query_end'), reverse=True)[0]
+            hsp_2 = sorted(hsps, key=attrgetter('query_start'))[0]
+
+            if self.is_reversed:
+                anchor_hsps[relative] = AnchorHSPs(hsp_1, hsp_2, strand)
+            else:
+                anchor_hsps[relative] = AnchorHSPs(hsp_2, hsp_1, strand)
+
+        return anchor_hsps
+
+    def missing_5prime(self, anchor_hsps, qs_thresh=16, ss_thresh=40):
+        """
+        Return True if the anchor_hsps indicate a missing 5'-end of
+        this contig.
+
+        `qs_start` and `ss_thresh` are in amino acids.
+        Each HSP has a query start and a subject start. A missing
+        5'-end would look like this (in the case that the HSP spans
+        the missing part):
+        
+                       query start
+                      |   HSP
+                 |------------------------------------------| contig
+                      |||||||||||
+              |.......|---------| subject
+           subject
+            start
+        
+        We infer missing 5'-end based on the query start position
+        (compared to a threshold, `qs_thresh`) and the subject start
+        position (`ss_thresh`). Starting late in the subject and early
+        in the query probably means we're missing part of a protein.
+        
+        """
+        
+        missing_5prime = Counter()
+
+        for most_5prime, most_3prime, strand in anchor_hsps:
+            # note that for reverse strand: query_start is really
+            # query_end, but we compare it to the difference between
+            # query_end and query_length.
+            query_start = most_5prime.query_start
+            sbjct_start = most_5prime.sbjct_start
+
+            if strand > 0:
+                m = query_start <= qs_thresh and sbjct_start >= ss_thresh
+                missing_5prime[m] += 1
+            else:
+                qs = abs(query_start - self.len) + 1 # blast results are 1-indexed
+                m = qs <= qs_thresh and sbjct_start >= ss_thresh
+                missing_5prime[m] += 1
+                  
+        return missing_5prime[True] >= missing_5prime[False]
+
     
+        

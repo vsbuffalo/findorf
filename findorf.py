@@ -87,7 +87,7 @@ def predict_orf(args):
     TODO
     """
     contig_seqs = cPickle.load(args.input)
-
+    
     return contig_seqs
         
 

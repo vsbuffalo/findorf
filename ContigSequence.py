@@ -53,7 +53,7 @@ class ContigSequence():
         self.len = len(sequence)
 
         # information added by blastx results
-        self.all_relatives = dict()
+        self.all_relatives = defaultdict(list)
         
     # def __repr__(self):
     #     """
@@ -93,27 +93,36 @@ class ContigSequence():
                     
     #     return out
 
-    def get_relatives(self, e_value=None, identity=None):
+    def get_relatives(self, e_value=None, pi_range=None):
         """
         Return relatives that pass thresholding filters.
         
         The `add_relative` method adds relatives' HSPs to a dictionary
         attribute, `all_relatives`. However, in most cases, we want to
         use a subset of these relatives that satisfy requirements
-        based on phylogenetic needs, i.e. requiring a relative HSP
+        based on phylogenetic requirements, i.e. requiring a relative HSP
         have a percent identity consistent with evolutionary distance.
 
-        If `e_value` or `identity` are None, they are not used for
+        If `e_value` or `pi_range` are None, they are not used for
         filtering `all_relatives`.
         """
-        if e_value is None and identity is None:
+        if e_value is None and pi_range is None:
             return self.all_relatives
 
-        filtered_relatives = dict()
-        for relative, hsps in self.all_relatives.items():
-            filtered_relatives
+        # little closures for filters
+        in_range = lambda x: pi_range[0] <= x.percent_identity <= pi_range[1]
+        e_thresh = lambda x: x.e <= e_value
 
-        return passed_thresh
+        # build up filter tuple; this is modular and others can be added
+        filters = [(pi_range, in_range), (e_value, e_thresh)]
+
+        filtered_relatives = defaultdict(list)
+        for relative, hsps in self.all_relatives.items():
+            for h in hsps:
+                if all([fun(h) for arg, fun in filters if arg is not None]):
+                    filtered_relatives[relative].append(h)
+
+        return filtered_relatives
 
     @property
     def num_relatives(self):
@@ -125,8 +134,17 @@ class ContigSequence():
             if len(hsps) > 0:
                 num_relatives += 1
         return num_relatives
-    
 
+    @property
+    def has_relatives(self):
+        """
+        Return True or False depending on whether the number of
+        relatives is greater than 0.
+
+        """
+        return self.num_relatives > 0
+        
+        
     def gff_dict(self):
         """
         Return a dictionary of some key attribute's values,
@@ -180,26 +198,18 @@ class ContigSequence():
         extract and store the relevant parts of the _best_ alignment
         only.
         """
-        relative_exists = self.all_relatives.get(relative, False)
-
-        if not relative_exists:
-            self.all_relatives[relative] = dict()
-        else:
-            msg = "relative '%s' already exists for this ContigSequence"
-            raise Exception, msg % relative
-
         if len(blast_record.alignments) == 0:
             # no alignments, so we dont have any info to add for this
             # relative.
             return 
-
-        self.all_relatives = defaultdict(list)
 
         # TODO check: are these guaranteed in best first order?
         best_alignment = blast_record.alignments[0]
         for hsp in best_alignment.hsps:
             percent_identity = hsp.identities/float(hsp.align_length)
 
+            assert(hsp.frame[1] is 0)
+            
             hsp = HSP(e=hsp.expect,
                       identities=hsp.identities,
                       length=hsp.align_length,
@@ -209,8 +219,51 @@ class ContigSequence():
                       query_end=hsp.query_end,
                       sbjct_start=hsp.sbjct_start,
                       sbjct_end=hsp.sbjct_end,
-                      frame=hsp.frame)
+                      frame=hsp.frame[0])
 
             self.all_relatives[relative].append(hsp)
 
+    @property
+    def frames(self):
+        """
+        Calculate and return the identity counts by relative and
+        frame. This is used for both frameshift and any_frameshift.
+        """
+        frame_counts = defaultdict(Counter)
+        for relative, hsps in self.all_relatives.iteritems():
+            # count the number of identities per each relative's HSP
+            for h in hsps:
+                f = h.frame
+                frame_counts[relative][f] += h.identities
 
+        return frame_counts
+
+    @property
+    def majority_frameshift(self):
+        """
+        Returns True of False if there's a frameshift in the majority
+        of relatives, weighted by their identities.
+        
+        """
+
+        if not self.has_relatives:
+            return None
+
+        frameshifts = Counter()
+        for relative, counts in self.frames.items():
+            frameshifts[len(counts.keys()) > 1] += sum(counts.values())
+            
+        return frameshifts[True] >= frameshifts[False]
+
+    @property
+    def any_frameshift(self):
+        """
+        Return if there are any relatives with frameshifts.
+        
+        """
+        if not self.has_relatives:
+            return None
+    
+        return any([len(c.keys()) > 1 for r, c in self.frames.iteritems()])
+
+    

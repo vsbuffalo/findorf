@@ -1,4 +1,3 @@
-## ContigSequence.py
 """
 ContigSequence.py contains the class declaration for ContigSequence
 and required biological constants such as STOP_CODONS and START_CODONS.
@@ -375,5 +374,5 @@ class ContigSequence():
                   
         return missing_5prime[True] >= missing_5prime[False]
 
-    
         
+

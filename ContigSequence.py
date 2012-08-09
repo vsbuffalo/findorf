@@ -18,9 +18,6 @@ except ImportError, e:
 
 import templates
 
-## Biological constants
-STOP_CODONS = set(("TAG", "TGA", "TAA"))
-START_CODONS = set(("ATG"))
 GTF_FIELDS = ("seqname", "source", "feature", "start",
               "end", "score", "strand", "frame", "group")
 

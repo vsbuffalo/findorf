@@ -44,6 +44,7 @@ import argparse
 import os
 
 import templates
+import rules
 from ContigSequence import ContigSequence
 
 def mean(x):
@@ -86,7 +87,11 @@ def predict_orf(args):
     """
     TODO
     """
-    contig_seqs = cPickle.load(args.input)
+    all_contig_seqs = cPickle.load(args.input)
+
+    for query_id, contig_seq in all_contig_seqs:
+        if contig_seq.has_relatives:
+            rules.predict_ORF_vanilla(contig_seq)
     
     return contig_seqs
         

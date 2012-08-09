@@ -50,44 +50,61 @@ class ContigSequence():
 
         # information added by blastx results
         self.all_relatives = defaultdict(list)
+
+        # ORF and annotation attributes
+        self.orf = None
+        self.annotation = None
         
-    # def __repr__(self):
-    #     """
-    #     A representation of the object for dense output and
-    #     interactive debugging.
-    #     """
-
-    #     info = dict(id=self.query_id, length=self.len,
-    #                 num_relatives=self.num_relatives,
-    #                 consensus_frame=self.consensus_frame,
-    #                 majority_frame=self.majority_frame,
-    #                 any_frameshift=self.any_frameshift,
-    #                 majority_frameshift=self.majority_frameshift,
-    #                 missing_start=self.missing_start,
-    #                 missing_stop=self.missing_stop,
-    #                 missing_5prime=self.missing_5prime,
-    #                 full_length_orf=self.full_length_orf,
-    #                 orf_start = self.orf_start,
-    #                 orf_stop=self.orf_stop, seq=self.orf)
         
-    #     out = Template(templates.contig_seq_repr).substitute(info)
+    def __repr__(self):
+        """
+        A representation of the object for dense output and
+        interactive debugging.
+        """
 
-    #     for relative, start_tuple in self.start_tuples.iteritems():
-    #         query_start, sbjct_start, strand = start_tuple
-    #         rel_info = (relative, sbjct_start, query_start, {1:"+", -1:"-"}[strand])
-    #         out += ("%s\n    subject start: %s\n    query start/end"
-    #         " (if strand forward/reverse): %s\n    strand: %s\n" % rel_info)
+        info = dict(id=self.query_id, length=self.len,
+                    num_relatives=self.num_relatives,
+                    majority_frame=self.majority_frame,
+                    majority_frameshift=self.majority_frameshift,
+                    missing_start=self.annotation['missing_start'],
+                    missing_stop=self.annotation['missing_stop'],
+                    missing_5prime=self.missing_5prime,
+                    full_length_orf=self.annotation['full_length_orf'],
+                    orf_start = self.orf.start,
+                    orf_stop=self.orf.stop, seq=None)
+        
+        out = Template(templates.contig_seq_repr).substitute(info)
 
-    #     # in later versions, we could use a templating engine...
-    #     if self.has_relatives:
-    #         out += "\n# Relative Identities in Frames\n"
-    #         for relative, count_frames in self.frames_identities.iteritems():
-    #             if len(count_frames):
-    #                 out += "%s\n" % relative
-    #             for frame, identities in count_frames.iteritems():
-    #                 out += "  frame: %s\n  identities:  %s\n\n" % (frame, identities)
+        for relative, start_tuple in self.start_tuples.iteritems():
+            query_start, sbjct_start, strand = start_tuple
+            rel_info = (relative, sbjct_start, query_start, {1:"+", -1:"-"}[strand])
+            out += ("%s\n    subject start: %s\n    query start/end"
+            " (if strand forward/reverse): %s\n    strand: %s\n" % rel_info)
+
+        # in later versions, we could use a templating engine...
+        if self.has_relatives:
+            out += "\n# Relative Identities in Frames\n"
+            for relative, count_frames in self.frames_identities.iteritems():
+                if len(count_frames):
+                    out += "%s\n" % relative
+                for frame, identities in count_frames.iteritems():
+                    out += "  frame: %s\n  identities:  %s\n\n" % (frame, identities)
                     
-    #     return out
+        return out
+
+    def add_orf_prediction(self, orf):
+        """
+        Add a predicted ORF, which is a ORFPrediction named tuple.
+        """
+        self.orf = orf
+
+    def add_annotation(self, annotation):
+        """
+        Annotation is just a dictinary of key-value pairs; this append
+        those (or updates them if they exist)
+        """
+        self.annotation += annotation
+        
 
     def get_relatives(self, e_value=None, pi_range=None):
         """
@@ -105,15 +122,19 @@ class ContigSequence():
         if e_value is None and pi_range is None:
             return self.all_relatives
 
-        # little closures for filters
-        in_range = lambda x: pi_range[0] <= x.percent_identity <= pi_range[1]
-        e_thresh = lambda x: x.e <= e_value
-
-        # build up filter tuple; this is modular and others can be added
-        filters = [(pi_range, in_range), (e_value, e_thresh)]
+        # little funcs for e-value filtering
+        e_thresh = lambda x, _: x.e <= e_value
 
         filtered_relatives = defaultdict(list)
         for relative, hsps in self.all_relatives.items():
+
+            # make a custom filter closure for this relative's range;
+            # if a relative's range is None, we don't filter on it.
+            rng = pi_range[relative]
+            in_range = lambda x: rng None or rng[0] <= x.percent_identity <= rng[1]
+
+            filters = [(e_value, e_thresh), (pi_range, in_range)]
+
             for h in hsps:
                 if all([fun(h) for arg, fun in filters if arg is not None]):
                     filtered_relatives[relative].append(h)

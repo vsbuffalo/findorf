@@ -90,11 +90,8 @@ def predict_orf(args):
     all_contig_seqs = cPickle.load(args.input)
 
     for query_id, contig_seq in all_contig_seqs:
-        if contig_seq.has_relatives:
-            rules.predict_ORF_vanilla(contig_seq)
-    
-    return contig_seqs
-        
+        generic_predict_ORF(contig_seq, args.e_value, args.relative_pi)
+    return contig_seqs        
 
 def join_blastx_results(args):
     """

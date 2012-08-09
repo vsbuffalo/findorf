@@ -1,10 +1,11 @@
 """
 Rules.py contains the rules that predict ORF. These are not class
 methods in the ContigSequence class, even though they take these
-objects because these should be a bit more modular.
+objects because these should be a bit more modular. ContigSequence
+provides all information that can be gathered from the ContigSequence;
+these prediction and annotation rules are those that can be applied to
+infer ORFs and annotation.
 
-There are also functions for annotating traits dependent upon the ORF,
-i.e. if there's a pseudogene due to internal stop codon.
 """
 
 
@@ -200,3 +201,44 @@ def predict_ORF_vanilla(cs):
     best_start, best_stop = all_orfs[0]
     return PredictedORF(best_start, best_stop, frame)
 
+def annotate_ORF(cs, orf):
+    """
+    If we have an ORF (from PredictedORF named tuple), annotate some
+    obvious characteristics about it.
+    """
+    annotation = dict()
+
+    annotation['missing_start'] = orf.start is None
+    annotation['missing_stop'] = orf.stop is None
+    annotation['full_length'] = None not in (orf.start, orf.stop)
+
+    if orf_annotation['full_length']:
+        orf_annotation['contains_stop'] = contains_internal_stop_codon(cs, orf)
+
+    return annotation
+
+
+def generic_predict_ORF(cs, e_value=None, pi_range=None):
+    """
+    The central dispatcher; logic function.
+
+    In the future, it might be nice to do some sort of CLOS-style
+    generic method dispatching.
+
+    """
+
+    if cs.has_relatives:
+        # we have relatives; we can predict the ORF
+        if cs.majority_frameshift:
+            orf = predict_ORF_frameshift(cs, e_value, pi_range)
+        elif cs.missing_5prime:
+            orf = predict_ORF_missing_5prime(cs)
+        else:        
+            orf = predict_ORF_vanilla(contig_seq)
+
+        # with an ORF, we annotate it    
+        orf_annotation = annotate_ORF(orf)
+
+    cs.add_orf_prediction(orf)
+    cs.add_annotation(orf_annotation)
+    

@@ -9,8 +9,15 @@ sequence?
 
 3. If there's a stop codon in in from the contig start to the query start, we ignore it.
 
+4. Very important: check that some of the query length adjustments
+aren't using query length (in bp) when we should be using protein
+length in amino acids.
+
 ## Cases to Check
 
+ - k26_contig_4655 misassembled, finding ORF in 5'
+
+ - k61_contig_59200 no frameshift, one in ORFpredictor
 
  - k36_contig_9886 starts with a start codon, but has a missing 5'-end.
 
@@ -25,4 +32,6 @@ sequence?
  - k26_contig_24653
 
  - k26_contig_22146 - frameshift, but orf start/end
+
+
 

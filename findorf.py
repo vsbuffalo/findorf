@@ -44,7 +44,7 @@ import argparse
 import os
 
 import templates
-import rules
+from rules import generic_predict_ORF
 from ContigSequence import ContigSequence
 
 def mean(x):
@@ -83,15 +83,33 @@ def parse_blastx_args(args):
         sys.exit(msg % e.filename)
     return handles
 
+def parse_percent_identity_args(args):
+    """
+    Parse the percent identity threshold arguments, making them None
+    if they are not specified.
+    """
+    try:
+        if args.i is None:
+            return None
+        tmp = [tuple(re.split(r':|,', i)) for i in args.i if i is not None]
+        pi_ranges = dict([(k, (l, u)) for k, l, u in tmp])
+    except Exception, e:
+        msg = ("error parsing percent identity thresholds; "
+               "must be in format rel:x,y where rel is the relative "
+               "identifier from the join operation and 0 < x, y <= 100.\n")
+        raise argparse.ArgumentTypeError(msg)
+    return pi_range_args
+
 def predict_orf(args):
     """
-    TODO
+    First, parse the relative percenty identity arguments.
     """
     all_contig_seqs = cPickle.load(args.input)
-
-    for query_id, contig_seq in all_contig_seqs:
-        generic_predict_ORF(contig_seq, args.e_value, args.relative_pi)
-    return contig_seqs        
+    pi_range_args = parse_percent_identity_args(args)
+    
+    for query_id, contig_seq in all_contig_seqs.items():
+        generic_predict_ORF(contig_seq, args.e_value, pi_range_args)
+    return all_contig_seqs
 
 def join_blastx_results(args):
     """
@@ -174,9 +192,17 @@ if __name__ == "__main__":
                                 default=10e-3,
                                 help=("e-value threshold (relative hit "
                                       "only include if less than this)"))
+    parser_predict.add_argument('-i', type=str, nargs="+",
+                                default=None,
+                                help=("A relative-specific percent identity "
+                                      "range in teh format at:99,100, where"
+                                      "at is the same identifier used in join"))
+
     parser_predict.set_defaults(func=predict_orf)
 
     args = parser.parse_args()
 
     ## Run the appropriate step
     results = args.func(args)
+
+    print results

@@ -16,6 +16,7 @@ try:
 except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
 
+from rules import HSP
 import templates
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
@@ -23,11 +24,8 @@ GTF_FIELDS = ("seqname", "source", "feature", "start",
 
 ## Named Tuples for lightweight object storage
 OrfSet = namedtuple('OrfSet', ['start', 'stop', 'length', 'rank'])
-HSP = namedtuple('HSP', ['e', 'identities', 'length',
-                         'percent_identity', 'title',
-                         'query_start', 'query_end',
-                         'sbjct_start', 'sbjct_end',
-                         'frame'])
+AnchorHSPs = namedtuple('AnchorHSPs',
+                        ['most_5prime', 'most_3prime', 'strand'])
 
 
 class ContigSequence():
@@ -53,44 +51,32 @@ class ContigSequence():
 
         # ORF and annotation attributes
         self.orf = None
-        self.annotation = None
-        
-        
-    def __repr__(self):
-        """
-        A representation of the object for dense output and
-        interactive debugging.
-        """
+        self.annotation = dict()
 
-        info = dict(id=self.query_id, length=self.len,
+    def __repr__(self):
+
+        info = dict(id=self.query_id,
+                    length=self.len,
                     num_relatives=self.num_relatives,
                     majority_frame=self.majority_frame,
                     majority_frameshift=self.majority_frameshift,
-                    missing_start=self.annotation['missing_start'],
-                    missing_stop=self.annotation['missing_stop'],
-                    missing_5prime=self.missing_5prime,
-                    full_length_orf=self.annotation['full_length_orf'],
-                    orf_start = self.orf.start,
-                    orf_stop=self.orf.stop, seq=None)
+                    missing_start=self.get_annotation('missing_start'),
+                    missing_stop=self.get_annotation('missing_stop'),
+                    missing_5prime=self.missing_5prime(self.get_anchor_HSPs()),
+                    full_length_orf=self.get_annotation('full_length'),
+                    orf_start=self.orf.start if self.orf is not None else None,
+                    orf_stop=self.orf.stop if self.orf is not None else None,
+                    seq=None)
         
-        out = Template(templates.contig_seq_repr).substitute(info)
-
-        for relative, start_tuple in self.start_tuples.iteritems():
-            query_start, sbjct_start, strand = start_tuple
-            rel_info = (relative, sbjct_start, query_start, {1:"+", -1:"-"}[strand])
-            out += ("%s\n    subject start: %s\n    query start/end"
-            " (if strand forward/reverse): %s\n    strand: %s\n" % rel_info)
-
-        # in later versions, we could use a templating engine...
-        if self.has_relatives:
-            out += "\n# Relative Identities in Frames\n"
-            for relative, count_frames in self.frames_identities.iteritems():
-                if len(count_frames):
-                    out += "%s\n" % relative
-                for frame, identities in count_frames.iteritems():
-                    out += "  frame: %s\n  identities:  %s\n\n" % (frame, identities)
-                    
+        out = Template(templates.contig_sequence_repr).substitute(info)
         return out
+    
+
+    def get_annotation(self, key):
+        """
+        Get annotation from key, or return None if it doesn't exist.
+        """
+        return self.annotation.get(key, None)
 
     def add_orf_prediction(self, orf):
         """
@@ -103,7 +89,7 @@ class ContigSequence():
         Annotation is just a dictinary of key-value pairs; this append
         those (or updates them if they exist)
         """
-        self.annotation += annotation
+        self.annotation = dict(self.annotation.items() + annotation.items())
         
 
     def get_relatives(self, e_value=None, pi_range=None):
@@ -123,17 +109,20 @@ class ContigSequence():
             return self.all_relatives
 
         # little funcs for e-value filtering
-        e_thresh = lambda x, _: x.e <= e_value
+        e_thresh = lambda x: x.e <= e_value
 
         filtered_relatives = defaultdict(list)
         for relative, hsps in self.all_relatives.items():
 
+            filters = [(e_value, e_thresh)]
             # make a custom filter closure for this relative's range;
             # if a relative's range is None, we don't filter on it.
-            rng = pi_range[relative]
-            in_range = lambda x: rng None or rng[0] <= x.percent_identity <= rng[1]
-
-            filters = [(e_value, e_thresh), (pi_range, in_range)]
+            
+            if pi_range is not None:
+                rng = pi_range[relative]
+                in_range = (lambda x:
+                            rng is None or rng[0] <= x.percent_identity <= rng[1])
+                filters.append((pi_range, in_range))
 
             for h in hsps:
                 if all([fun(h) for arg, fun in filters if arg is not None]):
@@ -278,8 +267,11 @@ class ContigSequence():
                 # no frameshifts in this relative
                 frame[counts.keys()[0]] += sum(counts.values())
 
-        majority_frame, count = frame.most_common(1)[0]
-        return majority_frame
+        if len(frame):
+            majority_frame, count = frame.most_common(1)[0]
+            return majority_frame
+
+        return None
                 
                 
     @property
@@ -333,8 +325,6 @@ class ContigSequence():
         """
         # TODO add unit tests for this.
 
-        AnchorHSPs = namedtuple('AnchorHSPs',
-                                ['most_5prime', 'most_3prime', 'strand'])
         anchor_hsps = dict()
         strand = -1 if self.is_reversed else 1
         
@@ -376,7 +366,8 @@ class ContigSequence():
         
         missing_5prime = Counter()
 
-        for most_5prime, most_3prime, strand in anchor_hsps:
+        for relative, hsps in anchor_hsps.iteritems():
+            most_5prime, most_3prime, strand = hsps
             # note that for reverse strand: query_start is really
             # query_end, but we compare it to the difference between
             # query_end and query_length.
@@ -392,6 +383,4 @@ class ContigSequence():
                 missing_5prime[m] += 1
                   
         return missing_5prime[True] >= missing_5prime[False]
-
-        
 

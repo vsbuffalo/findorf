@@ -58,29 +58,39 @@ def put_seq_in_frame(seq, frame):
         raise Exception, "improper frame: frame must be in [1, 3]"
     return seq[(frame-1):]
 
-def any_overlap(query_start, query_end, subject_start, subject_end, strand):
+def any_overlap(range_a, range_b, reverse=False, closed=True):
     """
-    Is there any overlap in two ranges?
+    Is there any overlap in two ranges? We could use interval trees,
+    but in our application, we'll only be considering two ranges.
 
-         |---------------| q
-                  |------------| s
+    forward strand:
+    
+          |---------------| a
+                  |------------| b
+    
+         |---------------| a
+                         |----| b
 
-         |---------------|
-                         |----|
-                  
-          |------------| q
-    |----------| s
+    or              
+          |------------| a
+    |----------| b
 
+    on the forward strand, always: start < end.
+    
     """
+    a_start, a_end = range_a
+    b_start, b_end = range_b
 
-    assert(strand in (-1, 1))
-
-    if strand < 0:
-        pass
+    if not reverse:
+        if closed:
+            return b_start <= a_end and a_start <= b_end
+        if not closed:
+            return b_start < a_end and a_start < b_end
     else:
-        a = subject_start <= query_end and subject_end >= query_end
-        b = subject_end >= query_start and query_end > subject_end
-        return a or b
+        if closed:
+            return b_start >= a_end and a_start >= b_end
+        if not closed:
+            return b_start > a_end and a_start > b_end
 
 
 

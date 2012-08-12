@@ -81,62 +81,66 @@ def test_get_anchor_HSPs():
     and reverse strands.
     
     """
-
+    # forward strand
     hsp_1 = HSP(e=0.0,identities=132, length=156,
                 percent_identity=0.8461, title=u'Bradi2g60290.1',
                 query_start=3, query_end=470, sbjct_start=632,
-                sbjct_end=787, frame=1)
+                sbjct_end=787, frame=2)
 
     hsp_2 = HSP(e=0.0, identities=53, length=89,
                 percent_identity=0.5955, title=u'Bradi2g60290.1',
                 query_start=1321, query_end=1572, sbjct_start=256,
-                sbjct_end=344, frame=3)
+                sbjct_end=344, frame=2)
+
+    hsp_3 = HSP(e=2.89e-173, identities=182, length=268,
+                percent_identity=0.6791, title=u'GRMZM2G303587_T01',
+                query_start=488, query_end=1291, sbjct_start=198,
+                sbjct_end=465, frame=2)
+    hsp_4 = HSP(e=2.891e-173, identities=38, length=58,
+                percent_identity=0.6551, title=u'GRMZM2G303587_T01',
+                query_start=1324, query_end=1497, sbjct_start=125,
+                sbjct_end=182, frame=2)
+    
+    # reverse strand
+    hsp_5 = HSP(e=0.0, identities=216, length=278, percent_identity=0.7769,
+                title=u'Bradi2g60290.1', query_start=488, query_end=1321,
+                sbjct_start=348, sbjct_end=625, frame=-2)
+    hsp_6 = HSP(e=0.0, identities=53, length=89,
+                percent_identity=0.5955, title=u'Bradi2g60290.1',
+                query_start=1323, query_end=1572, sbjct_start=256,
+                sbjct_end=344, frame=-2)
+
+    hsp_7 = HSP(e=2.89e-173, identities=182, length=268,
+                percent_identity=0.6791, title=u'GRMZM2G303587_T01',
+                query_start=489, query_end=1291, sbjct_start=198,
+                sbjct_end=465, frame=-2)
+    hsp_8 = HSP(e=2.891e-173, identities=38, length=58,
+                percent_identity=0.6551, title=u'GRMZM2G303587_T01',
+                query_start=1324, query_end=1497, sbjct_start=125,
+                sbjct_end=182, frame=-2)
 
     
     forward_relatives = {
         'rel_a': [
-            HSP(e=0.0, identities=216, length=278, percent_identity=0.7769,
-                title=u'Bradi2g60290.1', query_start=488, query_end=1321,
-                sbjct_start=348, sbjct_end=625, frame=2),
-            hsp_1, # most 5'
-            hsp_2],
-        'rel_b': [ 
-            HSP(e=2.89e-173, identities=182, length=268,
-                percent_identity=0.6791, title=u'GRMZM2G303587_T01',
-                query_start=488, query_end=1291, sbjct_start=198,
-                sbjct_end=465, frame=2),
-            hsp_2, # most 3'
-            HSP(e=2.891e-173, identities=38, length=58,
-                percent_identity=0.6551, title=u'GRMZM2G303587_T01',
-                query_start=1324, query_end=1497, sbjct_start=125,
-                sbjct_end=182, frame=3)]
+            hsp_1,
+            hsp_3,
+            hsp_4],
+        'rel_b': [
+            hsp_1,
+            hsp_2,
+            hsp_3,
+            hsp_4]
             }
 
     reverse_relatives = {
-        'rel_a': [
-            HSP(e=0.0, identities=216, length=278, percent_identity=0.7769,
-                title=u'Bradi2g60290.1', query_start=488, query_end=1321,
-                sbjct_start=348, sbjct_end=625, frame=-2),
-            HSP(e=0.0, identities=132, length=156, percent_identity=0.8461,
-                title=u'Bradi2g60290.1', query_start=3, query_end=470,
-                sbjct_start=632, sbjct_end=787, frame=-1),
-            HSP(e=0.0, identities=53, length=89, percent_identity=0.5955,
-                title=u'Bradi2g60290.1', query_start=1321, query_end=1572,
-                sbjct_start=256, sbjct_end=344, frame=-3)],
-        'rel_b': [
-            HSP(e=2.89e-173, identities=182, length=268,
-                percent_identity=0.6791, title=u'GRMZM2G303587_T01',
-                query_start=488, query_end=1291, sbjct_start=198,
-                sbjct_end=465, frame=-2),
-            HSP(e=2.8995e-173, identities=114, length=157,
-                percent_identity=0.7261, title=u'GRMZM2G303587_T01',
-                query_start=3, query_end=470, sbjct_start=472,
-                sbjct_end=628, frame=-1),
-            HSP(e=2.891e-173, identities=38, length=58,
-                percent_identity=0.6551, title=u'GRMZM2G303587_T01',
-                query_start=1324, query_end=1497, sbjct_start=125,
-                sbjct_end=182, frame=-3)]
-            }
+        'rel_a': [hsp_5, hsp_6, hsp_7, hsp_8]
+        }
 
-    print get_anchor_HSPs(forward_relatives, False)
-    assert(get_anchor_HSPs(forward_relatives, False) == AnchorHSPs(hsp_1, hsp_2, 1))
+    # forward
+    assert(get_anchor_HSPs(forward_relatives, False)['rel_a'] == AnchorHSPs(hsp_1, hsp_4, 1))
+    assert(get_anchor_HSPs(forward_relatives, False)['rel_b'] == AnchorHSPs(hsp_1, hsp_2, 1))
+
+    # reverse
+    assert(get_anchor_HSPs(reverse_relatives, True)['rel_a'] == AnchorHSPs(hsp_6, hsp_5, -1))
+
+

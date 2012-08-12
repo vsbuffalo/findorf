@@ -12,13 +12,14 @@ majority frame: $majority_frame
 # Frameshift
 majority frameshift: $majority_frameshift
 
-# Anchor HSPs (no filtering)
+# Anchor HSPs
 $anchor_hsps
 
 # ORF Integrity
 missing start codon: $missing_start
 missing stop codon: $missing_stop
 5'-end likely missing: $missing_5prime
+no HSP coverage of any ORF: $no_hsps_coverages
 
 # Predicted ORF
 $orf
@@ -28,7 +29,7 @@ seq: $seq
 ------------------------------------
 """
     
-orf_repr = """## ORF
+orf_repr = """ORF
 length (bp): $length_bp
 length (aa): $length_aa
 
@@ -38,25 +39,22 @@ end (in frame): $end
 start (in query): $query_start
 end (in query): $query_end
 
-frame: $frame
-"""
+frame: $frame"""
 
-hsp_repr = """## HSP
+hsp_repr = """HSP
 identities/length: $identities/$length
 percent identity: $percent_identity
 e-value: $e
-
 frame: $frame
 query start - end: $query_start - $query_end
-subject start -end: $sbjct_start - $sbjct_end
+subject start - end: $sbjct_start - $sbjct_end
 """
 
-anchor_hsps_repr = """## AnchorHSPs
+anchor_hsps_repr = """AnchorHSPs
 strand: $strand
 
 most 3':
 $most_3prime
 
 most 5':
-$most_5prime
-"""
+$most_5prime"""

@@ -13,6 +13,8 @@ sequence?
 aren't using query length (in bp) when we should be using protein
 length in amino acids.
 
+5. Add qs_start, etc missing 5prime params as args
+
 ## Cases to Check
 
  - k41_contig_27125 - tons of HSPs

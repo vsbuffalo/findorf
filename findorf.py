@@ -1,5 +1,5 @@
 # findorf.py -- orf prediction and annotation
-info = """
+"""
 findorf.py: ORF prediction and annotation via blastx results of close
   relatives.
 
@@ -15,16 +15,36 @@ There are two primary operations of findorf.py:
 1. Join all the XML blastx results with the contig FASTA file.
 
 2. Predict ORFs and annotate contigs based on the data from the join
-operation.
+operation, given phylogentically-driven cutoffs to consider the
+relatives to use.
 
 These are done seperately, since one may wish to change the parameters
 and output from the predict command without having to re-run the join
 operation.
 
-A ContigSequence is an object that summarizes the contig sequence and
-relatives' information (from blastx). The `rules` module is a set of
-functions applied to these objects, and some rules will require that
-specific attributes of the ContigSequence be propagated.
+"""
+__version__ = 0.9
+
+info = """
+findorf - ORF prediction and RNA contig annotation using comparative genomics
+version: %s
+
+Vince Buffalo (vsbuffaloAAAA@gmail.com, sans poly-A tail)
+Dubcovsky Lab, Plant Sciences, UC Davis
+
+Basic usage: run `findorf join` to join XML BLASTX results against
+separate relatives' databases, then run `findorf predict` to output
+ORF predictions.
+
+When specifying XML BLASTX result databases of each relative, use the
+format: short_id:filename-of-blastx-results.xml, i.e.:
+
+    at:athaliana.xml bd:brachy.xml
+
+This is necssary for later specifying relative-specific percent
+identity constraints (as integers out of 100), i.e.:
+
+    at:78,90 bd:80,95
 """
 
 import sys
@@ -44,7 +64,6 @@ import argparse
 import os
 
 import templates
-from rules import generic_predict_ORF
 from ContigSequence import ContigSequence
 
 def mean(x):
@@ -106,9 +125,14 @@ def predict_orf(args):
     """
     all_contig_seqs = cPickle.load(args.input)
     pi_range_args = parse_percent_identity_args(args)
-    
+    num = 0
     for query_id, contig_seq in all_contig_seqs.items():
-        generic_predict_ORF(contig_seq, args.e_value, pi_range_args)
+        if args.verbose: # FIXME
+            if num % 1000 == 0:
+                sys.stderr.write('.')
+        contig_seq.generic_predict_ORF(args.e_value, pi_range_args)
+        num += 1
+
     return all_contig_seqs
 
 def join_blastx_results(args):
@@ -187,11 +211,16 @@ if __name__ == "__main__":
                                 help="filename of the dense output file")
     parser_predict.add_argument('--full-length', action="store_true",
                                 help=("the FASTA reference that corresponds "
-                                "to BLASTX queries."))
+                                "to BLASTX queries"))
     parser_predict.add_argument('-e', '--e-value', type=float,
                                 default=10e-3,
                                 help=("e-value threshold (relative hit "
                                       "only include if less than this)"))
+
+    parser_predict.add_argument('-v', '--verbose', action="store_true",
+                                default=False,
+                                help="Output a period every 1,000 contigs predicted")
+
     parser_predict.add_argument('-i', type=str, nargs="+",
                                 default=None,
                                 help=("A relative-specific percent identity "

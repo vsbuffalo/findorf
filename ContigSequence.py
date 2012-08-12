@@ -2,7 +2,28 @@
 ContigSequence.py contains the class declarations for ContigSequence,
 HSP, ORF, and AnchorHSPs.
 
-# Some notes about BLASTX output.
+# ContigSequence
+
+ContigSequence is first created by joining the FASTA file of contigs
+with the separate XML BLASTX results against each relative's
+databases. Then, in a prediction step, each ContigSequence's
+`generic_predict_ORF` method is called, which dispatches the
+appropriate information to separate function. These functions that
+handle prediction are not class methods because:
+
+1. Not all methods would be applicable, i.e. `predict_ORF_frameshift`
+would not be useful if a ContigSequence's relatives all agree on the
+frame (and then what, it returns None in this case)? This just seems
+messy.
+
+2. They're easier to unit test without having to make a bunch of
+ContigSequence fixtures.
+
+3. They're more modular, and their interfaces are generic (and
+biologically rooted), so new rules or rule adjustments can be made
+through simpler interfaces (like seq, frame, anchor_HSPs).
+
+# BLASTX Output Notes
 
 Alignments with a negative frame (that is the reverse complement of
 the contig maps to the subject protein), have a `query_start` that
@@ -29,7 +50,12 @@ try:
 except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
 
-import rules
+from rules import get_closest_relative_anchor_HSP
+from rules import get_anchor_HSPs
+from rules import predict_ORF_frameshift, predict_ORF_missing_5prime
+from rules import predict_ORF_vanilla
+from rules import get_ORF_overlaps_5prime_HSP
+from rules import annotate_ORF
 from templates import anchor_hsps_repr, hsp_repr, orf_repr, contig_sequence_repr
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
@@ -53,7 +79,7 @@ class ORF():
 
     @property
     def length_aa(self):
-        return floor(abs(self.query_end - self.query_start)/3)
+        return int(floor(abs(self.query_end - self.query_start)/3))
 
     def __repr__(self):
         info = dict(start=self.start, end=self.end,
@@ -64,8 +90,13 @@ class ORF():
                     frame=self.frame)
         return Template(orf_repr).substitute(info)
 
-    def get_orf(query_seq):
-        return query_seq[self.query_start:self.query_end]
+    def get_orf(self, query_seq, include_stop=True):
+        if self.frame < 0:
+            query_seq = query_seq.reverse_complement()
+        end = self.query_end
+        if include_stop:
+            end += 3
+        return query_seq[self.query_start:end]
 
 class HSP():
     """
@@ -149,8 +180,15 @@ class ContigSequence():
         self.all_orfs = None
         self.annotation = dict()
 
+        # These are run-specific (i.e. they are gathered from
+        # arguments) parameters, and are hidden. The are stored
+        # because __repr__() should output the same results as the
+        # command line script run would, if python -i was called.
+        self._e_value = None
+        self._pi_range = None
+        
     def __repr__(self):
-        cr_anchor_hsp = rules.get_closest_relative_anchor_HSP(self.get_anchor_HSPs())
+        cr_anchor_hsp = get_closest_relative_anchor_HSP(self.get_anchor_HSPs())
         info = dict(id=self.query_id,
                     length=self.len,
                     num_relatives=self.num_relatives,
@@ -158,11 +196,16 @@ class ContigSequence():
                     majority_frameshift=self.majority_frameshift,
                     missing_start=self.get_annotation('missing_start'),
                     missing_stop=self.get_annotation('missing_stop'),
+                    contains_stop=self.get_annotation('contains_stop'),
+                    no_hsps_coverages=self.get_annotation('no_hsps_coverages'),
                     missing_5prime=self.missing_5prime(self.get_anchor_HSPs()),
                     full_length_orf=self.get_annotation('full_length'),
                     anchor_hsps=repr(cr_anchor_hsp),
-                    orf=repr(self.orf),
-                    seq=self.orf.get_orf(self.seq))
+                    orf=repr(self.orf))
+        if self.orf is not None:
+            info['seq'] = self.orf.get_orf(self.seq)
+        else:
+            info['seq'] = None
         
         out = Template(contig_sequence_repr).substitute(info)
         return out
@@ -188,37 +231,39 @@ class ContigSequence():
         self.annotation = dict(self.annotation.items() + annotation.items())
         
 
-    def get_relatives(self, e_value=None, pi_range=None):
+    def get_relatives(self):
         """
         Return relatives that pass thresholding filters.
         
         The `add_relative` method adds relatives' HSPs to a dictionary
         attribute, `all_relatives`. However, in most cases, we want to
         use a subset of these relatives that satisfy requirements
-        based on phylogenetic requirements, i.e. requiring a relative HSP
-        have a percent identity consistent with evolutionary distance.
+        based on phylogenetic requirements, i.e. requiring a relative
+        HSP have a percent identity consistent with evolutionary
+        distance. These constraints are run (via command line)
+        specific, and are `_e_value` and `_pi_range`.
 
-        If `e_value` or `pi_range` are None, they are not used for
+        If `_e_value` or `_pi_range` are None, they are not used for
         filtering `all_relatives`.
         """
-        if e_value is None and pi_range is None:
+        if self._e_value is None and self._pi_range is None:
             return self.all_relatives
 
         # little funcs for e-value filtering
-        e_thresh = lambda x: x.e <= e_value
+        e_thresh = lambda x: x.e <= self._e_value
 
         filtered_relatives = defaultdict(list)
         for relative, hsps in self.all_relatives.items():
 
-            filters = [(e_value, e_thresh)]
+            filters = [(self._e_value, e_thresh)]
             # make a custom filter closure for this relative's range;
             # if a relative's range is None, we don't filter on it.
             
-            if pi_range is not None:
-                rng = pi_range[relative]
+            if self._pi_range is not None:
+                rng = self._pi_range[relative]
                 in_range = (lambda x:
                             rng is None or rng[0] <= x.percent_identity <= rng[1])
-                filters.append((pi_range, in_range))
+                filters.append((self._pi_range, in_range))
 
             for h in hsps:
                 if all([fun(h) for arg, fun in filters if arg is not None]):
@@ -414,24 +459,22 @@ class ContigSequence():
 
         return self.majority_frame < 0        
 
-    def get_anchor_HSPs(self, e_value=None, pi_range=None):
+    def get_anchor_HSPs(self):
         """
         Get the 5'-most and 3'-most HSPs for each relative and put
         them in a tuple.
-
-        Note that we have to take into account that a query that
-        mapped in the reverse complemented configuration must be
-        flipped for calculating this. In this case, the `query_end`,
-        must be minimized, not the `query_subject`.
 
         We a generic `get_anchor_HSPs` method here, both because this
         method is useful outside of the `ContigSequence` class and
         because I wanted to unit test it outside of the
         `ContigSequence` class.
-        """
-        # TODO add unit tests for this.
 
-        return rules.get_anchor_HSPs(self.get_relatives(e_value, pi_range), self.is_reversed)
+        Also note that `get_relatives()` will look at `_e_value` and
+        `_pi_range`, run specific thresholding on which relatives to
+        consider.
+        """
+        
+        return get_anchor_HSPs(self.get_relatives(), self.is_reversed)
 
     def missing_5prime(self, anchor_hsps, qs_thresh=16, ss_thresh=40):
         """
@@ -482,19 +525,23 @@ class ContigSequence():
 
     def generic_predict_ORF(self, e_value=None, pi_range=None):
         """
-        The central dispatcher/logic behind ORF prediction
+        The central dispatcher/logic behind ORF prediction.
 
-        Some design notes: I debated whether this should be a class
-        method because I rather keep ContigSequence run-apathetic,
-        that is, it has no knowledge of the parameters for each
-        run. However, it funcioned primarily on this class's
-        attributes, so it became a class method. In the future, it
-        might be nice to do some sort of CLOS-style generic method
-        dispatching.
+        This method calls various functions in `rules`, which are
+        side-effect free on this ContigSequence object.
+
+        This is important because one could want to interactively run
+        different predictions using different `e_value` and
+        `pi_range`, without tangling up the `ContigSequence` object.
         """
 
         if self.has_relatives:
-            anchor_hsps = self.get_anchor_HSPs(e_value, pi_range)
+            # let's indicate these are a bit more private.
+            self._e_value = e_value
+            self._pi_range = pi_range
+
+            anchor_hsps = self.get_anchor_HSPs()
+            
             seq = self.seq
 
             ## The primary cases handled
@@ -504,8 +551,9 @@ class ContigSequence():
                 # we have a majority frameshift, so we let this
                 # function use the anchor HSPs to deduce the 5'-most
                 # frame
-                orfs = rules.predict_ORF_frameshift(seq, anchor_hsps)
-            elif self.missing_5prime():
+                missing_5prime = self.missing_5prime(anchor_hsps)
+                orfs = predict_ORF_frameshift(seq, anchor_hsps, missing_5prime)
+            elif self.missing_5prime(anchor_hsps):
                 # no frameshift, we know the frame (at least in a majority of cases)
                 frame = self.majority_frame
                 orfs = predict_ORF_missing_5prime(seq, frame)
@@ -517,11 +565,13 @@ class ContigSequence():
             ## candidate that overlaps the 5'-most HSP
             if orfs is not None:
                 self.all_orfs = orfs
-                orf = rules.get_ORF_overlaps_5prime_HSP(orfs, anchor_hsps)
+                orf = get_ORF_overlaps_5prime_HSP(orfs, anchor_hsps)
 
                 if orf is not None:
                     # with an ORF, we annotate it
-                    orf_annotation = rules.annotate_ORF(anchor_hsps, orf)
+                    orf_annotation = annotate_ORF(anchor_hsps, orf)
                     self.add_orf_prediction(orf)
                     self.add_annotation(orf_annotation)
                     return
+                else:
+                    self.add_annotation({'no_hsps_coverage'=True})

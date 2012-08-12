@@ -1,5 +1,10 @@
-## test_findorf.py -- unit tests for findorf.py
+"""
+test_findorf.py contains unit tests for high-impact functions,
+i.e. those that have a high value of:
 
+(number of calls) * P(error is silent)
+
+"""
 import unittest
 from nose.tools import with_setup
 from Bio.Seq import Seq

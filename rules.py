@@ -1,17 +1,10 @@
 """
-Rules.py contains the rules that predict ORF. These are not class
-methods in the ContigSequence class, even though they take these
-objects because these should be a bit more modular. ContigSequence
-provides all information that can be gathered from the ContigSequence;
-these prediction and annotation rules are those that can be applied to
-infer ORFs and annotation.
+Rules.py contains the rules and functions that predict ORF.
 
 
-TODO: don't just grab the 5'-most HSP, grab the 5'-most that overlaps
-anchor HSPs of closet relatives.
-
-TODO: when calculating overlaps, consider that ORF coordinates are
-different than query.
+ContigSequence provides all information that can be gathered from the
+ContigSequence; these prediction and annotation rules are those that
+can be applied to infer ORFs and annotation.
 
 """
 
@@ -23,7 +16,7 @@ except ImportError, e:
 from collections import namedtuple
 import pdb
 from operator import attrgetter, itemgetter
-from ContigSequence import HSP, ORF, AnchorHSPs
+import ContigSequence 
 
 ## Biological constants
 STOP_CODONS = set(["TAG", "TGA", "TAA"])
@@ -45,6 +38,7 @@ def put_seq_in_frame(seq, frame):
         raise Exception, "improper frame: frame must be in [1, 3]"
     return seq[(frame-1):]
 
+
 def get_codons(seq, frame):
     """
     Return a list of (codon, position_in_orf, pos_in_forward_query) tuples.
@@ -63,6 +57,7 @@ def get_codons(seq, frame):
 
     # remove the last string if not a full codon.
     return [(c, po, pfq) for c, po, pfq in tmp if len(c) == 3]
+
 
 def any_overlap(range_a, range_b, closed=True):
     """
@@ -151,10 +146,10 @@ def get_anchor_HSPs(relative_dict, is_reversed):
         if is_reversed:
             # if reversed, the HSP closest to the protein N-terminus
             # is the one with the latest end position
-            anchor_hsps[relative] = AnchorHSPs(hsp_1, hsp_2, strand)
+            anchor_hsps[relative] = ContigSequence.AnchorHSPs(hsp_1, hsp_2, strand)
         else:
             # on the forward strand, the opposite is true.
-            anchor_hsps[relative] = AnchorHSPs(hsp_2, hsp_1, strand)
+            anchor_hsps[relative] = ContigSequence.AnchorHSPs(hsp_2, hsp_1, strand)
 
     return anchor_hsps
 
@@ -168,6 +163,9 @@ def get_closest_relative_anchor_HSP(anchor_hsps, which='most_5prime', key='e'):
     percent_identity, or e). `which` revers which anchor HSP to look
     at: 5' or 3'.
     """
+    if not len(anchor_hsps):
+        return None
+    
     tmp = sorted(anchor_hsps.iteritems(),
                                   key=anchor_hsp_attrgetter(which, key))
 
@@ -215,18 +213,21 @@ def get_all_ORFs(codons, frame, in_reading_frame=False):
             query_start_pos = query_pos
             continue
         if in_reading_frame and codon in STOP_CODONS:
-            all_orfs.append(ORF(orf_start_pos, orf_pos, query_start_pos,
-                                query_pos, frame))
+            all_orfs.append(ContigSequence.ORF(orf_start_pos, orf_pos, query_start_pos,
+                                               query_pos, frame))
             in_reading_frame = False
+            orf_start_pos = None
+            query_start_pos = None
+            
             continue
     if in_reading_frame:
-        all_orfs.append(ORF(orf_start_pos, orf_pos,
-                            query_start_pos, query_pos, frame))
+        all_orfs.append(ContigSequence.ORF(orf_start_pos, orf_pos,
+                                           query_start_pos, query_pos, frame))
 
     return all_orfs
 
 
-def predict_ORF_frameshift(seq,anchor_hsps, missing_5prime, key='e'):
+def predict_ORF_frameshift(seq, anchor_hsps, missing_5prime, key='e'):
     """
     Predict an ORF in the case that we have a frameshift mutation. In
     this case, we can't rule out the possibility that our protein is
@@ -278,7 +279,8 @@ def predict_ORF_missing_5prime(seq, frame):
 
     return all_orfs
 
-def annotate_ORF(anchor_hsps, orf)::
+
+def annotate_ORF(anchor_hsps, orf):
     """
     If we have an ORF (from ORF class), annotate some
     obvious characteristiself about it.
@@ -312,4 +314,3 @@ def predict_ORF_vanilla(seq, frame):
         return None
     
     return all_orfs
-

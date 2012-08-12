@@ -66,13 +66,14 @@ class ORF():
     ORF represents an ORF prediction.
     """
 
-    def __init__(self, start, end, query_start, query_end, frame):
+    def __init__(self, start, end, query_start, query_end, frame, no_stop=False):
         self.start = start
         self.end = end
         self.query_start = query_start
         self.query_end = query_end
         self.frame = frame
-
+        self.no_stop = no_stop
+        
     @property
     def length_bp(self):
         return abs(self.query_end - self.query_start)
@@ -119,9 +120,9 @@ class HSP():
 
     def __repr__(self):
         info = dict(identities=self.identities,
-                    percent_identity=self.percent_identity,
+                    percent_identity=round(self.percent_identity, 3),
                     length=self.length,
-                    e=self.e,
+                    e=round(self.e, 12),
                     frame=self.frame,
                     query_start=self.query_start,
                     query_end=self.query_end,
@@ -572,6 +573,7 @@ class ContigSequence():
                     orf_annotation = annotate_ORF(anchor_hsps, orf)
                     self.add_orf_prediction(orf)
                     self.add_annotation(orf_annotation)
+                    self.add_annotation({'ORF has HSP coverage':True})
                     return
                 else:
-                    self.add_annotation({'no_hsps_coverage'=True})
+                    self.add_annotation({'ORF has HSP coverage':False})

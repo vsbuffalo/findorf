@@ -222,7 +222,7 @@ def get_all_ORFs(codons, frame, in_reading_frame=False):
             continue
     if in_reading_frame:
         all_orfs.append(ContigSequence.ORF(orf_start_pos, orf_pos,
-                                           query_start_pos, query_pos, frame))
+                                           query_start_pos, query_pos, frame, True))
 
     return all_orfs
 
@@ -288,7 +288,7 @@ def annotate_ORF(anchor_hsps, orf):
     annotation = dict()
 
     annotation['missing_start'] = orf.start is None
-    annotation['missing_stop'] = orf.end is None
+    annotation['missing_stop'] = orf.no_stop
     annotation['full_length'] = None not in (orf.start, orf.end)
 
     if annotation['full_length']:

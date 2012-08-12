@@ -1,6 +1,6 @@
 """
-ContigSequence.py contains the class declaration for ContigSequence
-and required biological constants such as STOP_CODONS and START_CODONS.
+ContigSequence.py contains the class declarations for ContigSequence,
+HSP, ORF, and AnchorHSPs.
 
 # Some notes about BLASTX output.
 
@@ -10,6 +10,9 @@ corresponds to the *end* of the subject protein, and the `query_end`
 is the 5'-most to the subject protein. So for frame < 0, `query_end`
 is the 5'-most.
 
+The HSP class from BioPython is documented here:
+http://biopython.org/DIST/docs/api/Bio.Blast.Record.HSP-class.html
+
 """
 
 import sys
@@ -17,6 +20,7 @@ import pdb
 from collections import Counter, namedtuple, defaultdict
 from string import Template
 from operator import itemgetter, attrgetter
+from math import floor
 
 try:
     from Bio.Blast import NCBIXML
@@ -25,15 +29,100 @@ try:
 except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
 
-from rules import HSP, ORF, AnchorHSPs
-from rules import get_anchor_HSPs
-import templates
+import rules
+from templates import anchor_hsps_repr, hsp_repr, orf_repr, contig_sequence_repr
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
               "end", "score", "strand", "frame", "group")
 
+class ORF():
+    """
+    ORF represents an ORF prediction.
+    """
+
+    def __init__(self, start, end, query_start, query_end, frame):
+        self.start = start
+        self.end = end
+        self.query_start = query_start
+        self.query_end = query_end
+        self.frame = frame
+
+    @property
+    def length_bp(self):
+        return abs(self.query_end - self.query_start)
+
+    @property
+    def length_aa(self):
+        return floor(abs(self.query_end - self.query_start)/3)
+
+    def __repr__(self):
+        info = dict(start=self.start, end=self.end,
+                    query_end=self.query_end,
+                    query_start=self.query_start,
+                    length_bp=self.length_bp,
+                    length_aa=self.length_aa,
+                    frame=self.frame)
+        return Template(orf_repr).substitute(info)
+
+    def get_orf(query_seq):
+        return query_seq[self.query_start:self.query_end]
+
+class HSP():
+    """
+    HSP represents a High-scoring Segment Pair from BLAST. BioPython
+    has an HSP class, but for ORF prediction, a smaller subset of the
+    attributes are needed.
+    """
+    def __init__(self, e, identities, length, percent_identity, title,
+                 query_start, query_end, sbjct_start, sbjct_end, frame):
+        self.e = e
+        self.identities = identities
+        self.length = length
+        self.percent_identity = percent_identity
+        self.title = title
+        self.query_start = query_start
+        self.query_end = query_end
+        self.sbjct_start = sbjct_start
+        self.sbjct_end = sbjct_end
+        self.frame = frame
+
+    def __repr__(self):
+        info = dict(identities=self.identities,
+                    percent_identity=self.percent_identity,
+                    length=self.length,
+                    e=self.e,
+                    frame=self.frame,
+                    query_start=self.query_start,
+                    query_end=self.query_end,
+                    sbjct_start=self.sbjct_start,
+                    sbjct_end=self.sbjct_end)
+        return Template(hsp_repr).substitute(info)
 
 
+class AnchorHSPs():
+    def __init__(self, most_5prime, most_3prime, strand):
+        self.most_5prime = most_5prime
+        self.most_3prime = most_3prime
+        self.strand = strand
+
+    def _indent_hsp(self, hsp, tab="  "):
+        out = ""
+        for line in repr(hsp).split("\n"):
+            out += tab + line + "\n"
+        return out
+
+    def __repr__(self):
+        info = dict(strand=self.strand,
+                    most_3prime=self._indent_hsp(self.most_3prime),
+                    most_5prime=self._indent_hsp(self.most_5prime))
+        
+        return Template(anchor_hsps_repr).substitute(info)
+
+    def __iter__(self):
+        for x in [self.most_5prime, self.most_3prime, self.strand]:
+            yield x
+         
+        
 class ContigSequence():
     """
     ContigSequence represents an assembled contig, that may be coding
@@ -61,7 +150,7 @@ class ContigSequence():
         self.annotation = dict()
 
     def __repr__(self):
-
+        cr_anchor_hsp = rules.get_closest_relative_anchor_HSP(self.get_anchor_HSPs())
         info = dict(id=self.query_id,
                     length=self.len,
                     num_relatives=self.num_relatives,
@@ -71,11 +160,11 @@ class ContigSequence():
                     missing_stop=self.get_annotation('missing_stop'),
                     missing_5prime=self.missing_5prime(self.get_anchor_HSPs()),
                     full_length_orf=self.get_annotation('full_length'),
-                    orf_start=self.orf.query_start if self.orf is not None else None,
-                    orf_end=self.orf.query_end if self.orf is not None else None,
-                    seq=None)
+                    anchor_hsps=repr(cr_anchor_hsp),
+                    orf=repr(self.orf),
+                    seq=self.orf.get_orf(self.seq))
         
-        out = Template(templates.contig_sequence_repr).substitute(info)
+        out = Template(contig_sequence_repr).substitute(info)
         return out
     
 
@@ -87,7 +176,7 @@ class ContigSequence():
 
     def add_orf_prediction(self, orf):
         """
-        Add a ORF, which is a ORF named tuple.
+        Add a ORF.
         """
         self.orf = orf
 
@@ -342,7 +431,7 @@ class ContigSequence():
         """
         # TODO add unit tests for this.
 
-        return get_anchor_HSPs(self.get_relatives(e_value, pi_range), self.is_reversed)
+        return rules.get_anchor_HSPs(self.get_relatives(e_value, pi_range), self.is_reversed)
 
     def missing_5prime(self, anchor_hsps, qs_thresh=16, ss_thresh=40):
         """
@@ -391,3 +480,48 @@ class ContigSequence():
                   
         return missing_5prime[True] >= missing_5prime[False]
 
+    def generic_predict_ORF(self, e_value=None, pi_range=None):
+        """
+        The central dispatcher/logic behind ORF prediction
+
+        Some design notes: I debated whether this should be a class
+        method because I rather keep ContigSequence run-apathetic,
+        that is, it has no knowledge of the parameters for each
+        run. However, it funcioned primarily on this class's
+        attributes, so it became a class method. In the future, it
+        might be nice to do some sort of CLOS-style generic method
+        dispatching.
+        """
+
+        if self.has_relatives:
+            anchor_hsps = self.get_anchor_HSPs(e_value, pi_range)
+            seq = self.seq
+
+            ## The primary cases handled
+            
+            # we have relatives; we can predict the ORF
+            if self.majority_frameshift:
+                # we have a majority frameshift, so we let this
+                # function use the anchor HSPs to deduce the 5'-most
+                # frame
+                orfs = rules.predict_ORF_frameshift(seq, anchor_hsps)
+            elif self.missing_5prime():
+                # no frameshift, we know the frame (at least in a majority of cases)
+                frame = self.majority_frame
+                orfs = predict_ORF_missing_5prime(seq, frame)
+            else:
+                frame = self.majority_frame
+                orfs = predict_ORF_vanilla(seq, frame)
+
+            ## Now, we try take each ORF list and find the 5'-most
+            ## candidate that overlaps the 5'-most HSP
+            if orfs is not None:
+                self.all_orfs = orfs
+                orf = rules.get_ORF_overlaps_5prime_HSP(orfs, anchor_hsps)
+
+                if orf is not None:
+                    # with an ORF, we annotate it
+                    orf_annotation = rules.annotate_ORF(anchor_hsps, orf)
+                    self.add_orf_prediction(orf)
+                    self.add_annotation(orf_annotation)
+                    return

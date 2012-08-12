@@ -23,24 +23,11 @@ except ImportError, e:
 from collections import namedtuple
 import pdb
 from operator import attrgetter, itemgetter
+from ContigSequence import HSP, ORF, AnchorHSPs
 
 ## Biological constants
 STOP_CODONS = set(["TAG", "TGA", "TAA"])
 START_CODONS = set(["ATG"])
-
-## Predefined tuple structures
-orf_fields = ['start', 'end', 'query_start', 'query_end', 'frame']
-ORF = namedtuple("ORF", orf_fields)
-
-HSP = namedtuple('HSP', ['e', 'identities', 'length',
-                         'percent_identity', 'title',
-                         'query_start', 'query_end',
-                         'sbjct_start', 'sbjct_end',
-                         'frame'])
-
-AnchorHSPs = namedtuple('AnchorHSPs',
-                        ['most_5prime', 'most_3prime', 'strand'])
-
 
 def put_seq_in_frame(seq, frame):
     """
@@ -119,7 +106,7 @@ def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps):
     """
     # we have to specify (via attribute) that we want the most_5prime,
     # as `get_closest_relative_anchor_HSP` will return an AnchorHSP
-    # named tuple, even with `which` specified, since `which` just
+    # object, even with `which` specified, since `which` just
     # indicates which to sort by, not to return.
     m5p_hsp = get_closest_relative_anchor_HSP(anchor_hsps).most_5prime
 
@@ -138,7 +125,7 @@ def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps):
 
 def anchor_hsp_attrgetter(which=None, key='e'):
     """
-    Like operator.attrgetter, but for AnchorHSPs named tuples. Dense
+    Like operator.attrgetter, but for AnchorHSPs object. Dense
     data structures need functions for digging into them cleanly.
 
     This may look strange, but recall attrgetter returns a function,
@@ -188,7 +175,7 @@ def get_closest_relative_anchor_HSP(anchor_hsps, which='most_5prime', key='e'):
 
     return cr_anchor_hsps
 
-def contains_internal_stop_codon(cs, e_value, pi_range, predicted_orf):
+def contains_internal_stop_codon(anchor_hsps, predicted_orf):
     """
     After we make an ORF prediction (the 5'-most ORF), we want to
     check that we don't have an HSP more 3' than our ORF stop
@@ -200,8 +187,6 @@ def contains_internal_stop_codon(cs, e_value, pi_range, predicted_orf):
 
     TODO: unit test
     """
-
-    anchor_hsps = cs.get_anchor_HSPs(e_value, pi_range)
 
     most_3prime = None
     for relative, ahsp in anchor_hsps.iteritems():
@@ -241,7 +226,7 @@ def get_all_ORFs(codons, frame, in_reading_frame=False):
     return all_orfs
 
 
-def predict_ORF_frameshift(cs, e_value=None, pi_range=None, key='e'):
+def predict_ORF_frameshift(seq,anchor_hsps, missing_5prime, key='e'):
     """
     Predict an ORF in the case that we have a frameshift mutation. In
     this case, we can't rule out the possibility that our protein is
@@ -252,9 +237,6 @@ def predict_ORF_frameshift(cs, e_value=None, pi_range=None, key='e'):
     `key` is what we should use to determine closest relative.
     
     """
-    anchor_hsps = cs.get_anchor_HSPs(e_value, pi_range)
-
-    
     # Get the frame of the closest relative's (by number of
     # identities) most 5'-end. Note that we look at relative closeness
     # by lowest e-value (by default `key='e'`) of which ever anchor
@@ -262,10 +244,7 @@ def predict_ORF_frameshift(cs, e_value=None, pi_range=None, key='e'):
     closest_relative_anchors = get_closest_relative_anchor_HSP(anchor_hsps, key=key)
     frame_5prime_hsp = closest_relative_anchors.most_5prime.frame
 
-    seq = cs.seq
     codons = get_codons(seq, frame_5prime_hsp)
-
-    missing_5prime = cs.missing_5prime(anchor_hsps)
 
     # missing 5'-end so we're assuming we're already reading.
     all_orfs = get_all_ORFs(codons, frame_5prime_hsp, missing_5prime)
@@ -274,10 +253,9 @@ def predict_ORF_frameshift(cs, e_value=None, pi_range=None, key='e'):
         return None
 
     return all_orfs
-
     
 
-def predict_ORF_missing_5prime(cs, e_value=None, pi_range=None):
+def predict_ORF_missing_5prime(seq, frame):
     """
     Predict an ORF in the case that we have a missing 5'-end.
 
@@ -291,11 +269,7 @@ def predict_ORF_missing_5prime(cs, e_value=None, pi_range=None):
     
     """
 
-    seq = cs.seq
-    frame = cs.majority_frame
-
     codons = get_codons(seq, frame)
-    anchor_hsps = cs.get_anchor_HSPs(e_value, pi_range)
 
     all_orfs = get_all_ORFs(codons, frame, in_reading_frame=True)
 
@@ -304,14 +278,31 @@ def predict_ORF_missing_5prime(cs, e_value=None, pi_range=None):
 
     return all_orfs
 
-
-def predict_ORF_vanilla(cs):
+def annotate_ORF(anchor_hsps, orf)::
     """
-    
+    If we have an ORF (from ORF class), annotate some
+    obvious characteristiself about it.
+    """
+    annotation = dict()
+
+    annotation['missing_start'] = orf.start is None
+    annotation['missing_stop'] = orf.end is None
+    annotation['full_length'] = None not in (orf.start, orf.end)
+
+    if annotation['full_length']:
+        cisc = contains_internal_stop_codon(anchor_hsps, orf)
+        annotation['contains_stop'] = cisc
+
+    return annotation
+
+
+def predict_ORF_vanilla(seq, frame):
+    """
+    The vanilla case: we have a sequence and a frame, full 5'-end, and
+    no frameshift, so we create all ORFs in this frame, as a ribosome
+    would.
 
     """
-    seq = cs.seq
-    frame = cs.majority_frame
     codons = get_codons(seq, frame)
 
     all_orfs = get_all_ORFs(codons, frame, in_reading_frame=False)
@@ -322,59 +313,3 @@ def predict_ORF_vanilla(cs):
     
     return all_orfs
 
-def annotate_ORF(cs, orf, e_value, pi_range):
-    """
-    If we have an ORF (from ORF named tuple), annotate some
-    obvious characteristics about it.
-    """
-    annotation = dict()
-
-    annotation['missing_start'] = orf.start is None
-    annotation['missing_stop'] = orf.end is None
-    annotation['full_length'] = None not in (orf.start, orf.end)
-
-    if annotation['full_length']:
-        cisc = contains_internal_stop_codon(cs, e_value, pi_range,  orf)
-        annotation['contains_stop'] = cisc
-
-    return annotation
-
-
-def generic_predict_ORF(cs, e_value=None, pi_range=None):
-    """
-    The central dispatcher; logic function.
-
-    In the future, it might be nice to do some sort of CLOS-style
-    generic method dispatching.
-
-    """
-
-    if cs.has_relatives:
-        anchor_hsps = cs.get_anchor_HSPs(e_value, pi_range)
-        
-        # we have relatives; we can predict the ORF
-        if cs.majority_frameshift:
-            orfs = predict_ORF_frameshift(cs, e_value, pi_range)
-        elif cs.missing_5prime(anchor_hsps):
-            orfs = predict_ORF_missing_5prime(cs)
-        else:        
-            orfs = predict_ORF_vanilla(cs)
-
-        if orfs is not None:
-            # get based orf
-            cs.all_orfs = orfs
-            orf = get_ORF_overlaps_5prime_HSP(orfs, anchor_hsps)
-
-            if orf is not None:
-                # with an ORF, we annotate it
-                orf_annotation = annotate_ORF(cs, orf, e_value, pi_range)
-                cs.add_orf_prediction(orf)
-            # cs.add_annotation(orf_annotation)
-        else:
-            orf = None
-            
-    else:
-        orf = None
-        orf_annotation = dict()
-        
-    

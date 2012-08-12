@@ -107,7 +107,7 @@ def predict_orf(args):
     all_contig_seqs = cPickle.load(args.input)
     pi_range_args = parse_percent_identity_args(args)
     
-    for query_id, contig_seq in all_contig_seqs.items()[:4000]:
+    for query_id, contig_seq in all_contig_seqs.items():
         generic_predict_ORF(contig_seq, args.e_value, pi_range_args)
     return all_contig_seqs
 
@@ -204,5 +204,3 @@ if __name__ == "__main__":
 
     ## Run the appropriate step
     results = args.func(args)
-
-    print results

@@ -19,6 +19,8 @@ length in amino acids.
 
  - k26_contig_4655 misassembled, finding ORF in 5'
 
+ - lots of different frames: k31_contig_16146
+
  - k31_contig_37537 missing start and frameshift
 
  - k61_contig_59200 no frameshift, one in ORFpredictor

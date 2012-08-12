@@ -4,7 +4,9 @@ import unittest
 from nose.tools import with_setup
 from Bio.Seq import Seq
 from rules import put_seq_in_frame
-from rules import any_overlap
+from rules import any_overlap, get_codons
+from rules import HSP
+from rules import get_anchor_HSPs, AnchorHSPs
 
 def test_seq_frame_generator():
     seq = "AAGATGT"
@@ -17,6 +19,31 @@ def test_seq_frame_generator():
 
 def assert_put_seq_in_frame(seq, frame, seq_in_frame):
     assert(str(put_seq_in_frame(Seq(seq), frame)) == seq_in_frame)
+
+
+def test_get_codons():
+    seq = Seq("AGTGAGATCTGATCG")
+
+    assert(get_codons(str(seq), 1) == [('AGT', 0, 0), ('GAG', 3, 3),
+                                       ('ATC', 6, 6), ('TGA', 9, 9), ('TCG', 12, 12)])
+    
+    assert(get_codons(str(seq), 2) == [('GTG', 0, 1), ('AGA', 3, 4),
+                                       ('TCT', 6, 7), ('GAT', 9, 10)])
+    
+    assert(get_codons(str(seq), 3) == [('TGA', 0, 2), ('GAT', 3, 5),
+                                       ('CTG', 6, 8), ('ATC', 9, 11)])
+
+    seq_rc = seq.reverse_complement()
+    assert(get_codons(str(seq_rc), 1) == [('CGA', 0, 0), ('TCA', 3, 3),
+                                          ('GAT', 6, 6), ('CTC', 9, 9),
+                                          ('ACT', 12, 12)])
+
+    assert(get_codons(str(seq_rc), 2) == [('GAT', 0, 1), ('CAG', 3, 4),
+                                          ('ATC', 6, 7), ('TCA', 9, 10)])
+
+    assert(get_codons(str(seq_rc), 3) == [('ATC', 0, 2), ('AGA', 3, 5),
+                                          ('TCT', 6, 8), ('CAC', 9, 11)])
+
 
 def test_any_overlap_generator():
     """
@@ -40,32 +67,76 @@ def test_any_overlap_generator():
                     (forward_f, forward_e, False, False), 
                     (forward_c, forward_d, False, True),
                     (forward_c, forward_d, True, True)]
-
-    reverse_a = (20, 10)
-    reverse_b = (24, 20)
-    reverse_c = (15, 1)
-    reverse_d = (10, 1)
-    reverse_e = (3, 1)
-    reverse_f = (30, 14)
-
-    reverse_cases = [(reverse_a, reverse_b, True, True),
-                    (reverse_a, reverse_b, False, False),
-                    (reverse_a, reverse_c, True, True),
-                    (reverse_a, reverse_e, True, False),
-                    (reverse_a, reverse_e, False, False),
-                    (reverse_f, reverse_e, False, False),
-                    (reverse_c, reverse_d, False, True),
-                    (reverse_c, reverse_d, True, True)]
-
     # forward cases
     for a, b, closed, truth in foward_cases:
-        yield assert_any_overlap, a, b, False, closed, truth
+        yield assert_any_overlap, a, b, closed, truth
 
-    # reverse cases
-    for a, b, closed,truth in reverse_cases:
-        yield assert_any_overlap, a, b, True, closed, truth
-
-def assert_any_overlap(a, b, reverse, closed, truth):
-    assert(any_overlap(a, b, reverse, closed=closed) == truth)
+def assert_any_overlap(a, b, closed, truth):
+    assert(any_overlap(a, b, closed=closed) == truth)
 
 
+def test_get_anchor_HSPs():
+    """
+    This is a very important function that must work on both forward
+    and reverse strands.
+    
+    """
+
+    hsp_1 = HSP(e=0.0,identities=132, length=156,
+                percent_identity=0.8461, title=u'Bradi2g60290.1',
+                query_start=3, query_end=470, sbjct_start=632,
+                sbjct_end=787, frame=1)
+
+    hsp_2 = HSP(e=0.0, identities=53, length=89,
+                percent_identity=0.5955, title=u'Bradi2g60290.1',
+                query_start=1321, query_end=1572, sbjct_start=256,
+                sbjct_end=344, frame=3)
+
+    
+    forward_relatives = {
+        'rel_a': [
+            HSP(e=0.0, identities=216, length=278, percent_identity=0.7769,
+                title=u'Bradi2g60290.1', query_start=488, query_end=1321,
+                sbjct_start=348, sbjct_end=625, frame=2),
+            hsp_1, # most 5'
+            hsp_2],
+        'rel_b': [ 
+            HSP(e=2.89e-173, identities=182, length=268,
+                percent_identity=0.6791, title=u'GRMZM2G303587_T01',
+                query_start=488, query_end=1291, sbjct_start=198,
+                sbjct_end=465, frame=2),
+            hsp_2, # most 3'
+            HSP(e=2.891e-173, identities=38, length=58,
+                percent_identity=0.6551, title=u'GRMZM2G303587_T01',
+                query_start=1324, query_end=1497, sbjct_start=125,
+                sbjct_end=182, frame=3)]
+            }
+
+    reverse_relatives = {
+        'rel_a': [
+            HSP(e=0.0, identities=216, length=278, percent_identity=0.7769,
+                title=u'Bradi2g60290.1', query_start=488, query_end=1321,
+                sbjct_start=348, sbjct_end=625, frame=-2),
+            HSP(e=0.0, identities=132, length=156, percent_identity=0.8461,
+                title=u'Bradi2g60290.1', query_start=3, query_end=470,
+                sbjct_start=632, sbjct_end=787, frame=-1),
+            HSP(e=0.0, identities=53, length=89, percent_identity=0.5955,
+                title=u'Bradi2g60290.1', query_start=1321, query_end=1572,
+                sbjct_start=256, sbjct_end=344, frame=-3)],
+        'rel_b': [
+            HSP(e=2.89e-173, identities=182, length=268,
+                percent_identity=0.6791, title=u'GRMZM2G303587_T01',
+                query_start=488, query_end=1291, sbjct_start=198,
+                sbjct_end=465, frame=-2),
+            HSP(e=2.8995e-173, identities=114, length=157,
+                percent_identity=0.7261, title=u'GRMZM2G303587_T01',
+                query_start=3, query_end=470, sbjct_start=472,
+                sbjct_end=628, frame=-1),
+            HSP(e=2.891e-173, identities=38, length=58,
+                percent_identity=0.6551, title=u'GRMZM2G303587_T01',
+                query_start=1324, query_end=1497, sbjct_start=125,
+                sbjct_end=182, frame=-3)]
+            }
+
+    print get_anchor_HSPs(forward_relatives, False)
+    assert(get_anchor_HSPs(forward_relatives, False) == AnchorHSPs(hsp_1, hsp_2, 1))

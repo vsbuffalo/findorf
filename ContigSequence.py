@@ -1,6 +1,15 @@
 """
 ContigSequence.py contains the class declaration for ContigSequence
 and required biological constants such as STOP_CODONS and START_CODONS.
+
+# Some notes about BLASTX output.
+
+Alignments with a negative frame (that is the reverse complement of
+the contig maps to the subject protein), have a `query_start` that
+corresponds to the *end* of the subject protein, and the `query_end`
+is the 5'-most to the subject protein. So for frame < 0, `query_end`
+is the 5'-most.
+
 """
 
 import sys
@@ -16,16 +25,13 @@ try:
 except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
 
-from rules import HSP
+from rules import HSP, ORF, AnchorHSPs
+from rules import get_anchor_HSPs
 import templates
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
               "end", "score", "strand", "frame", "group")
 
-## Named Tuples for lightweight object storage
-OrfSet = namedtuple('OrfSet', ['start', 'stop', 'length', 'rank'])
-AnchorHSPs = namedtuple('AnchorHSPs',
-                        ['most_5prime', 'most_3prime', 'strand'])
 
 
 class ContigSequence():
@@ -51,6 +57,7 @@ class ContigSequence():
 
         # ORF and annotation attributes
         self.orf = None
+        self.all_orfs = None
         self.annotation = dict()
 
     def __repr__(self):
@@ -64,8 +71,8 @@ class ContigSequence():
                     missing_stop=self.get_annotation('missing_stop'),
                     missing_5prime=self.missing_5prime(self.get_anchor_HSPs()),
                     full_length_orf=self.get_annotation('full_length'),
-                    orf_start=self.orf.start if self.orf is not None else None,
-                    orf_stop=self.orf.stop if self.orf is not None else None,
+                    orf_start=self.orf.query_start if self.orf is not None else None,
+                    orf_end=self.orf.query_end if self.orf is not None else None,
                     seq=None)
         
         out = Template(templates.contig_sequence_repr).substitute(info)
@@ -80,7 +87,7 @@ class ContigSequence():
 
     def add_orf_prediction(self, orf):
         """
-        Add a predicted ORF, which is a ORFPrediction named tuple.
+        Add a ORF, which is a ORF named tuple.
         """
         self.orf = orf
 
@@ -163,7 +170,7 @@ class ContigSequence():
         out["source"] = "findorf"
         out["feature"] = "predicted_orf"
         out["start"] = self.orf_start + 1 if self.orf_start is not None else "."
-        out["end"] = self.orf_stop + 1 if self.orf_stop is not None else "."
+        out["end"] = self.orf_end + 1 if self.orf_end is not None else "."
         out["score"] = "."
 
         if self.majority_frameshift is not None:
@@ -214,7 +221,12 @@ class ContigSequence():
         for hsp in best_alignment.hsps:
             percent_identity = hsp.identities/float(hsp.align_length)
 
+            # the BioPython parser doesn't give us a non-zero second
+            # frame (which is for use with non-blastx parsers).
             assert(hsp.frame[1] is 0)
+
+            # blastx has protein subjects, so this should always be the case
+            assert(hsp.sbjct_start < hsp.sbjct_end)
             
             hsp = HSP(e=hsp.expect,
                       identities=hsp.identities,
@@ -322,22 +334,15 @@ class ContigSequence():
         mapped in the reverse complemented configuration must be
         flipped for calculating this. In this case, the `query_end`,
         must be minimized, not the `query_subject`.
+
+        We a generic `get_anchor_HSPs` method here, both because this
+        method is useful outside of the `ContigSequence` class and
+        because I wanted to unit test it outside of the
+        `ContigSequence` class.
         """
         # TODO add unit tests for this.
 
-        anchor_hsps = dict()
-        strand = -1 if self.is_reversed else 1
-        
-        for relative, hsps in self.get_relatives(e_value, pi_range).items():
-            hsp_1 = sorted(hsps, key=attrgetter('query_end'), reverse=True)[0]
-            hsp_2 = sorted(hsps, key=attrgetter('query_start'))[0]
-
-            if self.is_reversed:
-                anchor_hsps[relative] = AnchorHSPs(hsp_1, hsp_2, strand)
-            else:
-                anchor_hsps[relative] = AnchorHSPs(hsp_2, hsp_1, strand)
-
-        return anchor_hsps
+        return get_anchor_HSPs(self.get_relatives(e_value, pi_range), self.is_reversed)
 
     def missing_5prime(self, anchor_hsps, qs_thresh=16, ss_thresh=40):
         """
@@ -378,6 +383,8 @@ class ContigSequence():
                 m = query_start <= qs_thresh and sbjct_start >= ss_thresh
                 missing_5prime[m] += 1
             else:
+                # takte the query start and subtract it from length to
+                # put everything on forward strand.
                 qs = abs(query_start - self.len) + 1 # blast results are 1-indexed
                 m = qs <= qs_thresh and sbjct_start >= ss_thresh
                 missing_5prime[m] += 1

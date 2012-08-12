@@ -9,6 +9,10 @@ infer ORFs and annotation.
 
 TODO: don't just grab the 5'-most HSP, grab the 5'-most that overlaps
 anchor HSPs of closet relatives.
+
+TODO: when calculating overlaps, consider that ORF coordinates are
+different than query.
+
 """
 
 
@@ -25,8 +29,8 @@ STOP_CODONS = set(["TAG", "TGA", "TAA"])
 START_CODONS = set(["ATG"])
 
 ## Predefined tuple structures
-orf_fields = ['start', 'stop', 'frame']
-PredictedORF = namedtuple("PredictedORF", orf_fields)
+orf_fields = ['start', 'end', 'query_start', 'query_end', 'frame']
+ORF = namedtuple("ORF", orf_fields)
 
 HSP = namedtuple('HSP', ['e', 'identities', 'length',
                          'percent_identity', 'title',
@@ -34,13 +38,9 @@ HSP = namedtuple('HSP', ['e', 'identities', 'length',
                          'sbjct_start', 'sbjct_end',
                          'frame'])
 
+AnchorHSPs = namedtuple('AnchorHSPs',
+                        ['most_5prime', 'most_3prime', 'strand'])
 
-def get_codons(seq_in_frame):
-    """
-    Return a list of (codon, position) tuples.
-    """
-    seq = seq_in_frame
-    return [(seq[pos:pos+3], pos) for pos in range(0, len(seq), 3)]
 
 def put_seq_in_frame(seq, frame):
     """
@@ -58,7 +58,26 @@ def put_seq_in_frame(seq, frame):
         raise Exception, "improper frame: frame must be in [1, 3]"
     return seq[(frame-1):]
 
-def any_overlap(range_a, range_b, reverse=False, closed=True):
+def get_codons(seq, frame):
+    """
+    Return a list of (codon, position_in_orf, pos_in_forward_query) tuples.
+    """
+
+    if frame < 0:
+        try:
+            seq = seq.reverse_complement()
+        except AttributeError:
+            msg = "no reverse_complement() method; 'seq' must of class Bio.Seq.Seq"
+            raise AttributeError, msg
+        frame = abs(frame)
+
+    tmp = [(str(seq[pos:pos+3]), pos-(frame-1), pos) for
+           pos in range(frame-1, len(seq), 3)]
+
+    # remove the last string if not a full codon.
+    return [(c, po, pfq) for c, po, pfq in tmp if len(c) == 3]
+
+def any_overlap(range_a, range_b, closed=True):
     """
     Is there any overlap in two ranges? We could use interval trees,
     but in our application, we'll only be considering two ranges.
@@ -81,62 +100,41 @@ def any_overlap(range_a, range_b, reverse=False, closed=True):
     a_start, a_end = range_a
     b_start, b_end = range_b
 
-    if not reverse:
-        if closed:
-            return b_start <= a_end and a_start <= b_end
-        if not closed:
-            return b_start < a_end and a_start < b_end
-    else:
-        if closed:
-            return b_start >= a_end and a_start >= b_end
-        if not closed:
-            return b_start > a_end and a_start > b_end
+    assert(a_start <= a_end)
+    assert(b_start <= b_end)
 
+    if closed:
+        return b_start <= a_end and a_start <= b_end
+    if not closed:
+        return b_start < a_end and a_start < b_end
 
-
-def overlaps_anchor_HSPs(start_pos, stop_pos, anchor_hsps, query_length):
+def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps):
     """
     Return True if start_pos and stop_pos have *any* overlap with the
     5'-most anchor HSP of the closest relative.
+
+    Note that this assumes start and stop are forward strand; we can
+    safely assume this because orf prediction is done this way (via
+    `put_seq_in_frame`.
     """
-    most_5prime_hsp = closest_relative_anchors(anchor_hsps)
+    # we have to specify (via attribute) that we want the most_5prime,
+    # as `get_closest_relative_anchor_HSP` will return an AnchorHSP
+    # named tuple, even with `which` specified, since `which` just
+    # indicates which to sort by, not to return.
+    m5p_hsp = get_closest_relative_anchor_HSP(anchor_hsps).most_5prime
 
-    if anchor_hsp.frame < 0:
-        anchor_hsp = put_HSP_on_foward_strand(most_5prime_hsp, query_length)
+    for orf in orf_list:
+        if orf is None:
+            continue
+        qstart, qend = orf.query_start, orf.query_end
+        if None in (qstart, qend):
+            continue
+        has_overlap = any_overlap((qstart, qend),
+                                  (m5p_hsp.query_start, m5p_hsp.query_end))
 
-    return 
-
-
-
-def put_HSP_on_foward_strand(hsp, query_length):
-    """
-    Take an HSP and return it on the forward strand.
-
-    
-    If a blastx HSP is reverse complemented to the subject sequence,
-    the 5'-most amino acid is the query end and the 3'-most amino acid
-    is the query start.
-
-    TODO: unit test this and double check that query_length is correct
-    units (bp vs aa).
-    """
-
-    if hsp.frame > 0:
-        # already on forward strand
-        return hsp
-
-    hsp = HSP(e=hsp.e,
-              identities=hsp.identities,
-              length=hsp.length,
-              percent_identity=hsp.percent_identity,
-              title=hsp.title,
-              query_start=query_length - hsp.query_end + 1,
-              query_end=query_length - hsp.query_start + 1,
-              sbjct_start=hsp.sbjct_start,
-              sbjct_end=hsp.sbjct_end,
-              frame=hsp.frame)
-
-    return hsp
+        if has_overlap:
+            return orf
+    return None
 
 def anchor_hsp_attrgetter(which=None, key='e'):
     """
@@ -150,6 +148,29 @@ def anchor_hsp_attrgetter(which=None, key='e'):
     """
     
     return lambda x: attrgetter(key)(attrgetter(which)(x[1]))
+
+
+def get_anchor_HSPs(relative_dict, is_reversed):
+    strand = -1 if is_reversed else 1
+    anchor_hsps = dict()
+        
+    for relative, hsps in relative_dict.items():
+        # hsp_1 corresponds to the HSP with the latest end position
+        hsp_1 = sorted(hsps, key=attrgetter('query_end'), reverse=True)[0]
+
+        # hsp_2 corresponds to the HSP with the earliest start position
+        hsp_2 = sorted(hsps, key=attrgetter('query_start'))[0]
+        
+        if is_reversed:
+            # if reversed, the HSP closest to the protein N-terminus
+            # is the one with the latest end position
+            anchor_hsps[relative] = AnchorHSPs(hsp_1, hsp_2, strand)
+        else:
+            # on the forward strand, the opposite is true.
+            anchor_hsps[relative] = AnchorHSPs(hsp_2, hsp_1, strand)
+
+    return anchor_hsps
+
 
 def get_closest_relative_anchor_HSP(anchor_hsps, which='most_5prime', key='e'):
     """
@@ -185,14 +206,12 @@ def contains_internal_stop_codon(cs, e_value, pi_range, predicted_orf):
     most_3prime = None
     for relative, ahsp in anchor_hsps.iteritems():
         this_hsp = ahsp.most_3prime
-        if this_hsp.frame < 0:
-            this_hsp = put_HSP_on_foward_strand(this_hsp, cs.len)
-        if this_hsp.query_start > predicted_orf.stop:
+        if this_hsp.query_start > predicted_orf.query_end:
             return True
     return False
 
 
-def get_all_ORFs(codons, in_reading_frame=False):
+def get_all_ORFs(codons, frame, in_reading_frame=False):
     """
     Generic ORF finder; it returns a list of all ORFs as they are
     found, given codons (a list if tuples in the form (codon,
@@ -201,18 +220,23 @@ def get_all_ORFs(codons, in_reading_frame=False):
     """
     
     all_orfs = list()
-    start_pos = None
-    for codon, position in codons:
+    orf_start_pos = None
+    query_start_pos = None
+    # Note that query_pos is forward strand.
+    for codon, orf_pos, query_pos in codons:
         if codon in START_CODONS and not in_reading_frame:
             in_reading_frame = True
-            start_pos = position
+            orf_start_pos = orf_pos
+            query_start_pos = query_pos
             continue
         if in_reading_frame and codon in STOP_CODONS:
-            all_orfs.append((start_pos, position))
+            all_orfs.append(ORF(orf_start_pos, orf_pos, query_start_pos,
+                                query_pos, frame))
             in_reading_frame = False
             continue
     if in_reading_frame:
-        all_orfs.append((start_pos, position))
+        all_orfs.append(ORF(orf_start_pos, orf_pos,
+                            query_start_pos, query_pos, frame))
 
     return all_orfs
 
@@ -239,23 +263,21 @@ def predict_ORF_frameshift(cs, e_value=None, pi_range=None, key='e'):
     frame_5prime_hsp = closest_relative_anchors.most_5prime.frame
 
     seq = cs.seq
-    seq_in_frame = str(put_seq_in_frame(seq, frame_5prime_hsp))
-    codons = get_codons(seq_in_frame)
+    codons = get_codons(seq, frame_5prime_hsp)
 
     missing_5prime = cs.missing_5prime(anchor_hsps)
 
     # missing 5'-end so we're assuming we're already reading.
-    all_orfs = get_all_ORFs(codons, missing_5prime)
+    all_orfs = get_all_ORFs(codons, frame_5prime_hsp, missing_5prime)
     
     if not len(all_orfs):
-        return PredictedORF(None, None, None)
+        return None
 
-    best_start, best_stop = all_orfs[0]
-    return PredictedORF(best_start, best_stop, frame_5prime_hsp)
+    return all_orfs
 
     
 
-def predict_ORF_missing_5prime(cs):
+def predict_ORF_missing_5prime(cs, e_value=None, pi_range=None):
     """
     Predict an ORF in the case that we have a missing 5'-end.
 
@@ -272,16 +294,15 @@ def predict_ORF_missing_5prime(cs):
     seq = cs.seq
     frame = cs.majority_frame
 
-    seq_in_frame = str(put_seq_in_frame(seq, frame))
-    codons = get_codons(seq_in_frame)
+    codons = get_codons(seq, frame)
+    anchor_hsps = cs.get_anchor_HSPs(e_value, pi_range)
 
-    all_orfs = get_all_ORFs(codons, in_reading_frame=True)
+    all_orfs = get_all_ORFs(codons, frame, in_reading_frame=True)
 
     if not len(all_orfs):
-        return PredictedORF(None, None, None)
+        return None
 
-    best_start, best_stop = all_orfs[0]
-    return PredictedORF(best_start, best_stop, frame)    
+    return all_orfs
 
 
 def predict_ORF_vanilla(cs):
@@ -291,29 +312,26 @@ def predict_ORF_vanilla(cs):
     """
     seq = cs.seq
     frame = cs.majority_frame
-    
-    seq_in_frame = str(put_seq_in_frame(seq, frame))
-    codons = get_codons(seq_in_frame)
+    codons = get_codons(seq, frame)
 
-    all_orfs = get_all_ORFs(codons, in_reading_frame=False)
+    all_orfs = get_all_ORFs(codons, frame, in_reading_frame=False)
     
     # first ORF is 5'-most
     if not len(all_orfs):
-        return PredictedORF(None, None, None)
+        return None
     
-    best_start, best_stop = all_orfs[0]
-    return PredictedORF(best_start, best_stop, frame)
+    return all_orfs
 
-def annotate_ORF(cs, e_value, pi_range, orf):
+def annotate_ORF(cs, orf, e_value, pi_range):
     """
-    If we have an ORF (from PredictedORF named tuple), annotate some
+    If we have an ORF (from ORF named tuple), annotate some
     obvious characteristics about it.
     """
     annotation = dict()
 
     annotation['missing_start'] = orf.start is None
-    annotation['missing_stop'] = orf.stop is None
-    annotation['full_length'] = None not in (orf.start, orf.stop)
+    annotation['missing_stop'] = orf.end is None
+    annotation['full_length'] = None not in (orf.start, orf.end)
 
     if annotation['full_length']:
         cisc = contains_internal_stop_codon(cs, e_value, pi_range,  orf)
@@ -332,20 +350,31 @@ def generic_predict_ORF(cs, e_value=None, pi_range=None):
     """
 
     if cs.has_relatives:
+        anchor_hsps = cs.get_anchor_HSPs(e_value, pi_range)
+        
         # we have relatives; we can predict the ORF
         if cs.majority_frameshift:
-            orf = predict_ORF_frameshift(cs, e_value, pi_range)
-        elif cs.missing_5prime(cs.get_anchor_HSPs(e_value, pi_range)):
-            orf = predict_ORF_missing_5prime(cs)
+            orfs = predict_ORF_frameshift(cs, e_value, pi_range)
+        elif cs.missing_5prime(anchor_hsps):
+            orfs = predict_ORF_missing_5prime(cs)
         else:        
-            orf = predict_ORF_vanilla(cs)
+            orfs = predict_ORF_vanilla(cs)
 
-        # with an ORF, we annotate it    
-        orf_annotation = annotate_ORF(cs, e_value, pi_range, orf)
+        if orfs is not None:
+            # get based orf
+            cs.all_orfs = orfs
+            orf = get_ORF_overlaps_5prime_HSP(orfs, anchor_hsps)
+
+            if orf is not None:
+                # with an ORF, we annotate it
+                orf_annotation = annotate_ORF(cs, orf, e_value, pi_range)
+                cs.add_orf_prediction(orf)
+            # cs.add_annotation(orf_annotation)
+        else:
+            orf = None
+            
     else:
         orf = None
         orf_annotation = dict()
         
-    cs.add_orf_prediction(orf)
-    cs.add_annotation(orf_annotation)
     

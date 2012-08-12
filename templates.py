@@ -19,7 +19,7 @@ Missing stop codon: $missing_stop
 # Predicted ORF - these values are 0-indexed
 ORF is full length: $full_length_orf
 ORF start: $orf_start
-ORF stop: $orf_stop
+ORF end: $orf_end
 ORF seq: $seq
 
 # Relatives Start Sites

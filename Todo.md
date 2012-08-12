@@ -15,7 +15,11 @@ length in amino acids.
 
 ## Cases to Check
 
+ - k41_contig_27125 - tons of HSPs
+
  - k26_contig_4655 misassembled, finding ORF in 5'
+
+ - k31_contig_37537 missing start and frameshift
 
  - k61_contig_59200 no frameshift, one in ORFpredictor
 
@@ -34,4 +38,6 @@ length in amino acids.
  - k26_contig_22146 - frameshift, but orf start/end
 
 
+## Neat contigs
 
+ - k41_contig_61398 r-gene

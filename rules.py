@@ -90,7 +90,7 @@ def any_overlap(range_a, range_b, closed=True):
     if not closed:
         return b_start < a_end and a_start < b_end
 
-def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps):
+def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps, allow_one_side=True):
     """
     Return True if start_pos and stop_pos have *any* overlap with the
     5'-most anchor HSP of the closest relative.
@@ -98,6 +98,10 @@ def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps):
     Note that this assumes start and stop are forward strand; we can
     safely assume this because orf prediction is done this way (via
     `put_seq_in_frame`.
+
+    `allow_one_side` indicates whether we should allow one side
+    overlap in the case of missing start/stop positions (i.e. those
+    are None).
     """
     # we have to specify (via attribute) that we want the most_5prime,
     # as `get_closest_relative_anchor_HSP` will return an AnchorHSP
@@ -110,10 +114,16 @@ def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps):
             continue
         qstart, qend = orf.query_start, orf.query_end
         if None in (qstart , qend):
-            continue
-        else:
-            has_overlap = any_overlap((qstart, qend),
-                                      (m5p_hsp.query_start, m5p_hsp.query_end))
+            if not allow_one_side:
+                continue
+            # extend the HSP as far towards to the 5' or 3' end as so
+            # to not prevent overlap.
+            if qstart is None:
+                qstart = 0
+            if qend is None:
+                qend = float('inf')            
+        has_overlap = any_overlap((qstart, qend),
+                                  (m5p_hsp.query_start, m5p_hsp.query_end))
 
         if has_overlap:
             return orf
@@ -312,6 +322,10 @@ def predict_ORF_vanilla(seq, frame, assuming_missing_start=True):
     The vanilla case: we have a sequence and a frame, full 5'-end, and
     no frameshift, so we create all ORFs in this frame, as a ribosome
     would.
+
+    If `assuming_missing_start` is True, we start pretending we are in
+    an ORF, reading until the first stop, and including this as an
+    ORF.
 
     """
     codons = get_codons(seq, frame)

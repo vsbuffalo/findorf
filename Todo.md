@@ -16,7 +16,7 @@ length in amino acids.
 5. Add qs_start, etc missing 5prime params as args
 
 ## Cases to Check
-
+ - k36_contig_11881 - premature stop
  - k41_contig_27125 - tons of HSPs
 
  - k26_contig_4655 misassembled, finding ORF in 5'

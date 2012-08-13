@@ -32,7 +32,8 @@ orf_repr = """ORF
 length: $length_bp bp, $length_aa aa
 [start, end], in frame: [$start, $end]
 [start, end], in query: [$query_start, $query_end]
-frame: $frame"""
+frame: $frame
+missing start/stop: $missing_start/$missing_stop"""
 
 hsp_repr = """HSP
 identities/length: $identities/$length

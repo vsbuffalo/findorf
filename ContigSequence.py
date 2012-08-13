@@ -78,10 +78,14 @@ class ORF():
         
     @property
     def length_bp(self):
+        if None in (self.query_end, self.query_start):
+            return None
         return abs(self.query_end - self.query_start)
 
     @property
     def length_aa(self):
+        if None in (self.query_end, self.query_start):
+            return None
         return int(floor(abs(self.query_end - self.query_start)/3))
 
     def __repr__(self):
@@ -90,7 +94,9 @@ class ORF():
                     query_start=self.query_start,
                     length_bp=self.length_bp,
                     length_aa=self.length_aa,
-                    frame=self.frame)
+                    frame=self.frame,
+                    missing_start=self.no_start,
+                    missing_stop=self.no_stop)
         return Template(orf_repr).substitute(info)
 
     def get_orf(self, query_seq, include_stop=True):

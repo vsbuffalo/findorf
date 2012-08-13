@@ -82,6 +82,21 @@ def mean(x):
     """
     return float(sum(x))/len(x) if len(x) > 0 else float('nan')
 
+def gather_start_info(contig_seqs, output_file):
+    """
+    Gather information on the query and subject start positions.
+    """
+    fn = ['id', 'relative', 'query_start', 'sbjct_start', 'frame']
+    writer = csv.DictWriter(output_file, fieldnames=fn, delimiter="\t")
+    for id, cs in contig_seqs.iteritems():
+        for relative, hsps in cs.all_relatives.iteritems():
+            for h in hsps:
+                info = dict(id=id, relative=relative,
+                            query_start=h.query_start,
+                            sbjct_start=h.sbjct_start,
+                            frame=h.frame)
+                writer.writerow(info)
+
 def parse_blastx_args(args):
     """
     Take a list of args and return a dictionary of names and files. If

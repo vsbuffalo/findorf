@@ -1,4 +1,4 @@
-# findorf: ORF prediction and annotation via blastx results of close relatives
+# findorf: ORF prediction & assembly annotation
 
 `findorf` is an ORF prediction and transcriptome contig annotation
 tool that uses the results of separate BLASTX results against close
@@ -13,16 +13,15 @@ codons, and frameshifts.
 
 ## Installation
 
-# How `findorf` Works
 
-## Join
+## `findorf` Join
 
 `findorf` first joins the contig sequence FASTA file with the results
 of each separate BLASTX against relatives using the `join`
 subcommand. This is to ensure that if prediction is run with different
 parameters, this step is not unnecessarily repeated.
 
-## Predict
+## `findorf` Predict
 
 The `predict` subcommand predicts ORFs and annotates contigs and
 ORFs. Annotation refers not to biological or functional annotation

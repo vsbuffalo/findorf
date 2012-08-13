@@ -92,8 +92,9 @@ def any_overlap(range_a, range_b, closed=True):
 
 def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps, allow_one_side=True):
     """
-    Return True if start_pos and stop_pos have *any* overlap with the
-    5'-most anchor HSP of the closest relative.
+    Return the (relative, ORF) tuple with start_pos and stop_pos that
+    have *any* overlap with the 5'-most anchor HSP of the closest
+    relative.
 
     Note that this assumes start and stop are forward strand; we can
     safely assume this because orf prediction is done this way (via
@@ -107,7 +108,8 @@ def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps, allow_one_side=True):
     # as `get_closest_relative_anchor_HSP` will return an AnchorHSP
     # object, even with `which` specified, since `which` just
     # indicates which to sort by, not to return.
-    m5p_hsp = get_closest_relative_anchor_HSP(anchor_hsps).most_5prime
+    relative, ahsp = get_closest_relative_anchor_HSP(anchor_hsps)
+    m5p_hsp = ahsp.most_5prime
 
     for orf in orf_list:
         if orf is None:
@@ -126,7 +128,7 @@ def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps, allow_one_side=True):
                                   (m5p_hsp.query_start, m5p_hsp.query_end))
 
         if has_overlap:
-            return orf
+            return (relative, orf)
     return None
 
 def anchor_hsp_attrgetter(which=None, key='e'):
@@ -171,7 +173,7 @@ def get_closest_relative_anchor_HSP(anchor_hsps, which='most_5prime', key='e'):
     codons and frameshifts), we will concern ourselves with the HSPs
     of the closest relative. This is a function to get the closet
     relative's AnchorHSPs, sorting by `key` (usually, idenitites,
-    percent_identity, or e). `which` revers which anchor HSP to look
+    percent_identity, or e). `which` refers which anchor HSP to look
     at: 5' or 3'.
     """
     if not len(anchor_hsps):
@@ -180,9 +182,7 @@ def get_closest_relative_anchor_HSP(anchor_hsps, which='most_5prime', key='e'):
     tmp = sorted(anchor_hsps.iteritems(),
                                   key=anchor_hsp_attrgetter(which, key))
 
-    cr_anchor_hsps = tmp[0][1]
-
-    return cr_anchor_hsps
+    return tmp[0]
 
 def contains_internal_stop_codon(anchor_hsps, predicted_orf):
     """
@@ -193,15 +193,12 @@ def contains_internal_stop_codon(anchor_hsps, predicted_orf):
 
     We look at all relative's anchor HSPs for maximum sensitivity, in
     case the closest relative's proteins are misannotated.
-
-    TODO: unit test
     """
 
     most_3prime = None
     for relative, ahsp in anchor_hsps.iteritems():
-        this_hsp = ahsp.most_3prime
-        if this_hsp.query_start > predicted_orf.query_end:
-            return True
+        this_ahsp = ahsp.most_3prime
+        return this_ahsp.query_start > predicted_orf.query_end
     return False
 
 
@@ -216,7 +213,6 @@ def get_all_ORFs(codons, frame, in_reading_frame=False):
     all_orfs = list()
     orf_start_pos = None
     query_start_pos = None
-    first_stop_hit = False
     # Note that query_pos is forward strand.
     for codon, orf_pos, query_pos in codons:
         if codon in START_CODONS and not in_reading_frame:
@@ -228,20 +224,21 @@ def get_all_ORFs(codons, frame, in_reading_frame=False):
             # a full reading frame, unless we haven't hit any stop
             # yet, then we're in the possible ORF from the start of
             # the query to the end.
-            all_orfs.append(ContigSequence.ORF(orf_start_pos, orf_pos, query_start_pos,
+            all_orfs.append(ContigSequence.ORF(orf_start_pos, orf_pos,
+                                               query_start_pos,
                                                query_pos, frame,
-                                               no_start=(not first_stop_hit)))
+                                               no_start=query_start_pos is None))
+                                               
             in_reading_frame = False
             orf_start_pos = None
             query_start_pos = None
-            first_stop_hit = True
-            
-            continue
-        
+
+    # add an partial ORFs, and mark as having no stop codon
     if in_reading_frame:
         all_orfs.append(ContigSequence.ORF(orf_start_pos, orf_pos,
                                            query_start_pos, query_pos,
-                                           frame, no_start=False,
+                                           frame,
+                                           no_start=query_start_pos is None,
                                            no_stop=True))
 
     return all_orfs
@@ -262,7 +259,8 @@ def predict_ORF_frameshift(seq, anchor_hsps, missing_5prime, key='e'):
     # identities) most 5'-end. Note that we look at relative closeness
     # by lowest e-value (by default `key='e'`) of which ever anchor
     # HSP we are talking about (in this case, 5'-most).
-    closest_relative_anchors = get_closest_relative_anchor_HSP(anchor_hsps, key=key)
+    relative, closest_relative_anchors = get_closest_relative_anchor_HSP(anchor_hsps,
+                                                                         key=key)
     frame_5prime_hsp = closest_relative_anchors.most_5prime.frame
 
     codons = get_codons(seq, frame_5prime_hsp)
@@ -309,15 +307,15 @@ def annotate_ORF(anchor_hsps, orf):
 
     annotation['missing_stop'] = orf.no_stop
     annotation['missing_start'] = orf.no_start
-    annotation['full_length'] = None not in (orf.start, orf.end)
+    annotation['full_length'] = not any((orf.no_start, orf.no_stop))
 
-    if annotation['full_length']:
-        cisc = contains_internal_stop_codon(anchor_hsps, orf)
-        annotation['contains_stop'] = cisc
+    cisc = contains_internal_stop_codon(anchor_hsps, orf)
+    annotation['contains_stop'] = cisc
+
     return annotation
 
 
-def predict_ORF_vanilla(seq, frame, assuming_missing_start=True):
+def predict_ORF_vanilla(seq, frame, assuming_missing_start=False):
     """
     The vanilla case: we have a sequence and a frame, full 5'-end, and
     no frameshift, so we create all ORFs in this frame, as a ribosome
@@ -325,8 +323,13 @@ def predict_ORF_vanilla(seq, frame, assuming_missing_start=True):
 
     If `assuming_missing_start` is True, we start pretending we are in
     an ORF, reading until the first stop, and including this as an
-    ORF.
+    ORF. This is False, and should not be set to True until (if)
+    `get_all_ORFs` is changed so that it restarts the loop when the
+    first ORF with a stop codon but no start is found. This is tricky;
+    a 5'-UTR could have a stop codon, so we would end up with
+    overlapping cases. For now, we take the conservative approach.
 
+    Note that the missing 5' logic will also catch these cases.
     """
     codons = get_codons(seq, frame)
 

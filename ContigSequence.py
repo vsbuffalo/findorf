@@ -55,7 +55,7 @@ from rules import get_anchor_HSPs
 from rules import predict_ORF_frameshift, predict_ORF_missing_5prime
 from rules import predict_ORF_vanilla
 from rules import get_ORF_overlaps_5prime_HSP
-from rules import annotate_ORF
+from rules import annotate_ORF, START_CODONS, STOP_CODONS
 from templates import anchor_hsps_repr, hsp_repr, orf_repr, contig_sequence_repr
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
@@ -105,7 +105,14 @@ class ORF():
         end = self.query_end
         if include_stop:
             end += 3
-        return query_seq[self.query_start:end]
+
+        # if we don't have a query start (is None), we make it the
+        # absolute value of the frame minus 1, which is the 0-indexed
+        # start.
+        start = self.query_start
+        if start is None:
+            start = abs(self.frame) - 1
+        return query_seq[start:end]
 
 class HSP():
     """
@@ -206,7 +213,8 @@ class ContigSequence():
                     missing_stop=self.get_annotation('missing_stop'),
                     missing_start=self.get_annotation('missing_start'),
                     contains_stop=self.get_annotation('contains_stop'),
-                    no_hsps_coverages=self.get_annotation('no_hsps_coverages'),
+                    cr_frameshift=self.get_annotation('closest_relative_frameshift'),
+                    orf_hsp_coverage=self.get_annotation('orf_hsp_coverage'),
                     missing_5prime=self.missing_5prime(self.get_anchor_HSPs()),
                     full_length_orf=self.get_annotation('full_length'),
                     anchor_hsps=repr(cr_anchor_hsp),
@@ -224,6 +232,7 @@ class ContigSequence():
         Annotate the contig, based on some attributes. We add these to
         a dictionary so cross-contig annotation counting is easier.
         """
+        self.annotation['has_relatives'] = self.has_relatives
         self.annotation['num_relatives'] = self.num_relatives
         self.annotation['length'] = self.len
         self.annotation['majority_frameshift'] = self.majority_frameshift
@@ -321,11 +330,11 @@ class ContigSequence():
         out["seqname"] = self.query_id
         out["source"] = "findorf"
         out["feature"] = "predicted_orf"
-        out["start"] = self.orf_start + 1 if self.orf_start is not None else "."
-        out["end"] = self.orf_end + 1 if self.orf_end is not None else "."
+        out["start"] = self.orf.query_start if self.orf is not None else '.'
+        out["end"] = self.orf.query_end if self.orf is not None else '.'
         out["score"] = "."
 
-        if self.majority_frameshift is not None:
+        if self.majority_frame is not None:
             out["strand"] = self.majority_frame/abs(self.majority_frame)
         else:
             out["strand"] = "."
@@ -463,7 +472,7 @@ class ContigSequence():
     @property
     def is_reversed(self):
         """
-        Return True of the query is reversed.
+        Return True if the query is reversed.
         
         """
         if not self.has_relatives:
@@ -538,6 +547,9 @@ class ContigSequence():
                   
         return missing_5prime[True] >= missing_5prime[False]
 
+    def inconsistency(self):
+        pass
+
     def generic_predict_ORF(self, e_value=None, pi_range=None):
         """
         The central dispatcher/logic behind ORF prediction.
@@ -587,13 +599,24 @@ class ContigSequence():
             ## candidate that overlaps the 5'-most HSP
             if orfs is not None:
                 self.all_orfs = orfs
-                orf = get_ORF_overlaps_5prime_HSP(orfs, anchor_hsps)
-
-                if orf is not None:
-                    # with an ORF, we annotate it
-                    orf_annotation = annotate_ORF(anchor_hsps, orf)
-                    self.add_orf_prediction(orf)
-                    self.add_annotation(orf_annotation)
-                    self.add_annotation({'orf_hsp_coverage':True})
-                else:
+                overlap_tuple = get_ORF_overlaps_5prime_HSP(orfs, anchor_hsps)
+                if overlap_tuple is None:
                     self.add_annotation({'orf_hsp_coverage':False})
+                    return
+
+                relative, orf = overlap_tuple
+                self.add_annotation({'relative_orf_hsp_overlap':relative})
+
+                # we may not have a majority frameshift, but maybe the
+                # closest relative does
+                cr_ahsp = anchor_hsps[relative]
+                cr_fs = cr_ahsp.most_5prime.frame != cr_ahsp.most_3prime.frame
+                self.add_annotation({'closest_relative_frameshift':cr_fs})
+                
+                # with an ORF, we annotate it
+                orf_annotation = annotate_ORF(anchor_hsps, orf)
+                self.add_orf_prediction(orf)
+                self.add_annotation(orf_annotation)
+                self.add_annotation({'orf_hsp_coverage':True})
+
+                    

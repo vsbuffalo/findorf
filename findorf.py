@@ -64,13 +64,14 @@ import argparse
 import os
 
 import templates
-from ContigSequence import ContigSequence
+from ContigSequence import ContigSequence, GTF_FIELDS
 
         
 # Which annotation keys to include in counting.
 SUMMARY_KEYS = set(['majority_frameshift', 'orf',
                     'any_frameshift', 'missing_5prime',
-                    'missing_start',
+                    'has_relatives', 'closest_relative_frameshift',
+                    'missing_start', # see note at rules.predict_ORF_vanilla
                     'missing_stop', 'no_hsps_coverages',
                     'full_length', 'contains_stop'])
 
@@ -152,9 +153,27 @@ def predict_orf(args):
         for attribute, value in contig_seq.annotation.iteritems():
             if attribute in SUMMARY_KEYS:
                 counter[attribute] += contig_seq.get_annotation(attribute) is True
-        
+
         counter['total'] += 1
 
+    ## Output various formats, we can make this a single loop later.
+    if args.dense is not None:
+        with args.dense as f:
+            for cs in all_contig_seqs.values():
+                if cs.has_relatives:
+                    f.write("----------------%s" % str(cs))
+    if args.gtf is not None:
+        with args.gtf as f:
+            dw = csv.DictWriter(f, GTF_FIELDS, delimiter="\t")
+            for cs in all_contig_seqs.values():
+                dw.writerow(cs.gtf_dict())
+    if args.fasta is not None:
+        with args.fasta as f:
+            for cs in all_contig_seqs.values():
+                if None not in (cs.orf, cs.majority_frame):
+                    f.write(">%s\n%s\n" % (cs.query_id, cs.orf.get_orf(cs.seq)))
+        
+    sys.stderr.write(Template(templates.out).substitute(counter))
     return dict(contigs=all_contig_seqs, summary=counter)
 
 def join_blastx_results(args):
@@ -222,9 +241,6 @@ if __name__ == "__main__":
                                 help=("the joined results of all BLASTX "
                                       "files (Python pickle file; from "
                                       "sub-command joined)"))
-    parser_predict.add_argument('--gff', type=argparse.FileType('w'),
-                                default=None,
-                                help="filename of the GFF of ORF predictions")
     parser_predict.add_argument('--gtf', type=argparse.FileType('w'),
                                 default=None,
                                 help="filename of the GTF of ORF predictions")
@@ -248,6 +264,9 @@ if __name__ == "__main__":
                                 help=("A relative-specific percent identity "
                                       "range in teh format at:99,100, where"
                                       "at is the same identifier used in join"))
+    parser_predict.add_argument('-o', '--fasta', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output full length ORFs")
 
     parser_predict.set_defaults(func=predict_orf)
 

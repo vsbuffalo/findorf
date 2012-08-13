@@ -18,7 +18,7 @@ $anchor_hsps
 missing start codon: $missing_start
 missing stop codon: $missing_stop
 5'-end likely missing: $missing_5prime
-no HSP coverage of any ORF: $no_hsps_coverages
+HSP coverage of ORF: $orf_hsp_coverage
 
 # Predicted ORF
 $orf
@@ -28,15 +28,13 @@ seq: $seq
 
 """
     
-orf_repr = """ORF
-length: $length_bp bp, $length_aa aa
+orf_repr = """length: $length_bp bp, $length_aa aa
 [start, end], in frame: [$start, $end]
 [start, end], in query: [$query_start, $query_end]
 frame: $frame
 missing start/stop: $missing_start/$missing_stop"""
 
-hsp_repr = """HSP
-identities/length: $identities/$length
+hsp_repr = """identities/length: $identities/$length
 percent identity: $percent_identity
 e-value: $e
 frame: $frame
@@ -48,3 +46,18 @@ most 3':
 $most_3prime
 most 5':
 $most_5prime"""
+
+out = """
+findorf summary
+---------------------------
+
+total: $total
+full length orfs: $full_length
+missing 5': $missing_5prime
+missing start codon: $missing_start
+missing stop codon: $missing_stop
+closest relative frameshift: $cr_frameshift
+majority frameshift: $majority_frameshift
+any frameshift: $any_frameshift
+contains stop codon: $contains_stop
+"""

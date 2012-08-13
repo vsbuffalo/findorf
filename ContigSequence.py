@@ -66,13 +66,15 @@ class ORF():
     ORF represents an ORF prediction.
     """
 
-    def __init__(self, start, end, query_start, query_end, frame, no_stop=False):
+    def __init__(self, start, end, query_start, query_end,
+                 frame, no_start=False, no_stop=False):
         self.start = start
         self.end = end
         self.query_start = query_start
         self.query_end = query_end
         self.frame = frame
         self.no_stop = no_stop
+        self.no_start = no_start
         
     @property
     def length_bp(self):
@@ -195,8 +197,8 @@ class ContigSequence():
                     num_relatives=self.num_relatives,
                     majority_frame=self.majority_frame,
                     majority_frameshift=self.majority_frameshift,
-                    missing_start=self.get_annotation('missing_start'),
                     missing_stop=self.get_annotation('missing_stop'),
+                    missing_start=self.get_annotation('missing_start'),
                     contains_stop=self.get_annotation('contains_stop'),
                     no_hsps_coverages=self.get_annotation('no_hsps_coverages'),
                     missing_5prime=self.missing_5prime(self.get_anchor_HSPs()),
@@ -211,7 +213,16 @@ class ContigSequence():
         out = Template(contig_sequence_repr).substitute(info)
         return out
     
-
+    def annotate_contig(self):
+        """
+        Annotate the contig, based on some attributes. We add these to
+        a dictionary so cross-contig annotation counting is easier.
+        """
+        self.annotation['num_relatives'] = self.num_relatives
+        self.annotation['length'] = self.len
+        self.annotation['majority_frameshift'] = self.majority_frameshift
+        self.annotation['any_frameshift'] = self.any_frameshift
+        
     def get_annotation(self, key):
         """
         Get annotation from key, or return None if it doesn't exist.
@@ -326,16 +337,10 @@ class ContigSequence():
         Return a dictionary corresponding to the columns of a GTF
         file.
         """
-
+        self.annotate_contig()
         # a GTF's file's "group" column contains a merged set of
         # attributes, which in ContigSequence's case are those below
-        attributes = dict(full_length_orf=self.full_length_orf,
-                          majority_frameshift=self.majority_frameshift,
-                          any_frameshift=self.any_frameshift,
-                          missing_5prime=self.missing_5prime,
-                          number_relatives=len(self.relatives))
-
-        group = "; ".join(["%s %s" % (k, v) for k, v in attributes.iteritems()])
+        group = "; ".join(["%s %s" % (k, v) for k, v in self.annotation.iteritems()])
         out = self.gff_dict()
         out["group"] = group
         return out
@@ -501,6 +506,9 @@ class ContigSequence():
         in the query probably means we're missing part of a protein.
         
         """
+
+        if not len(anchor_hsps):
+            return None
         
         missing_5prime = Counter()
 
@@ -554,11 +562,18 @@ class ContigSequence():
                 # frame
                 missing_5prime = self.missing_5prime(anchor_hsps)
                 orfs = predict_ORF_frameshift(seq, anchor_hsps, missing_5prime)
+
+                # these could have separate missing 5'-ends, so
+                # annotate those
+                is_missing_5prime = self.missing_5prime(anchor_hsps) is True
+                self.add_annotation({'missing_5prime':is_missing_5prime})
             elif self.missing_5prime(anchor_hsps):
                 # no frameshift, we know the frame (at least in a majority of cases)
+                self.add_annotation({'missing_5prime':True})
                 frame = self.majority_frame
                 orfs = predict_ORF_missing_5prime(seq, frame)
             else:
+                self.add_annotation({'missing_5prime':False})
                 frame = self.majority_frame
                 orfs = predict_ORF_vanilla(seq, frame)
 
@@ -573,7 +588,6 @@ class ContigSequence():
                     orf_annotation = annotate_ORF(anchor_hsps, orf)
                     self.add_orf_prediction(orf)
                     self.add_annotation(orf_annotation)
-                    self.add_annotation({'ORF has HSP coverage':True})
-                    return
+                    self.add_annotation({'orf_hsp_coverage':True})
                 else:
-                    self.add_annotation({'ORF has HSP coverage':False})
+                    self.add_annotation({'orf_hsp_coverage':False})

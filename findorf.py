@@ -66,6 +66,15 @@ import os
 import templates
 from ContigSequence import ContigSequence
 
+        
+# Which annotation keys to include in counting.
+SUMMARY_KEYS = set(['majority_frameshift', 'orf',
+                    'any_frameshift', 'missing_5prime',
+                    'missing_start',
+                    'missing_stop', 'no_hsps_coverages',
+                    'full_length', 'contains_stop'])
+
+
 def mean(x):
     """
     The arithematic mean.
@@ -123,17 +132,30 @@ def predict_orf(args):
     """
     First, parse the relative percenty identity arguments.
     """
+    # initiate summary counting
+    counter = Counter()
+    counter['total'] = 0
+    
     all_contig_seqs = cPickle.load(args.input)
     pi_range_args = parse_percent_identity_args(args)
-    num = 0
+    total = 0
     for query_id, contig_seq in all_contig_seqs.items():
         if args.verbose: # FIXME
-            if num % 1000 == 0:
+            if counter['total'] % 1000 == 0:
                 sys.stderr.write('.')
-        contig_seq.generic_predict_ORF(args.e_value, pi_range_args)
-        num += 1
 
-    return all_contig_seqs
+        # Predict ORF and update contig annotation
+        contig_seq.generic_predict_ORF(args.e_value, pi_range_args)
+        contig_seq.annotate_contig()
+
+        # Increment counters for this contig's annotations.
+        for attribute, value in contig_seq.annotation.iteritems():
+            if attribute in SUMMARY_KEYS:
+                counter[attribute] += contig_seq.get_annotation(attribute) is True
+        
+        counter['total'] += 1
+
+    return dict(contigs=all_contig_seqs, summary=counter)
 
 def join_blastx_results(args):
     """

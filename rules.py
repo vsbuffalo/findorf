@@ -109,10 +109,11 @@ def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps):
         if orf is None:
             continue
         qstart, qend = orf.query_start, orf.query_end
-        if None in (qstart, qend):
+        if None in (qstart , qend):
             continue
-        has_overlap = any_overlap((qstart, qend),
-                                  (m5p_hsp.query_start, m5p_hsp.query_end))
+        else:
+            has_overlap = any_overlap((qstart, qend),
+                                      (m5p_hsp.query_start, m5p_hsp.query_end))
 
         if has_overlap:
             return orf
@@ -205,6 +206,7 @@ def get_all_ORFs(codons, frame, in_reading_frame=False):
     all_orfs = list()
     orf_start_pos = None
     query_start_pos = None
+    first_stop_hit = False
     # Note that query_pos is forward strand.
     for codon, orf_pos, query_pos in codons:
         if codon in START_CODONS and not in_reading_frame:
@@ -213,16 +215,24 @@ def get_all_ORFs(codons, frame, in_reading_frame=False):
             query_start_pos = query_pos
             continue
         if in_reading_frame and codon in STOP_CODONS:
+            # a full reading frame, unless we haven't hit any stop
+            # yet, then we're in the possible ORF from the start of
+            # the query to the end.
             all_orfs.append(ContigSequence.ORF(orf_start_pos, orf_pos, query_start_pos,
-                                               query_pos, frame))
+                                               query_pos, frame,
+                                               no_start=(not first_stop_hit)))
             in_reading_frame = False
             orf_start_pos = None
             query_start_pos = None
+            first_stop_hit = True
             
             continue
+        
     if in_reading_frame:
         all_orfs.append(ContigSequence.ORF(orf_start_pos, orf_pos,
-                                           query_start_pos, query_pos, frame, True))
+                                           query_start_pos, query_pos,
+                                           frame, no_start=False,
+                                           no_stop=True))
 
     return all_orfs
 
@@ -287,18 +297,17 @@ def annotate_ORF(anchor_hsps, orf):
     """
     annotation = dict()
 
-    annotation['missing_start'] = orf.start is None
     annotation['missing_stop'] = orf.no_stop
+    annotation['missing_start'] = orf.no_start
     annotation['full_length'] = None not in (orf.start, orf.end)
 
     if annotation['full_length']:
         cisc = contains_internal_stop_codon(anchor_hsps, orf)
         annotation['contains_stop'] = cisc
-
     return annotation
 
 
-def predict_ORF_vanilla(seq, frame):
+def predict_ORF_vanilla(seq, frame, assuming_missing_start=True):
     """
     The vanilla case: we have a sequence and a frame, full 5'-end, and
     no frameshift, so we create all ORFs in this frame, as a ribosome
@@ -307,7 +316,7 @@ def predict_ORF_vanilla(seq, frame):
     """
     codons = get_codons(seq, frame)
 
-    all_orfs = get_all_ORFs(codons, frame, in_reading_frame=False)
+    all_orfs = get_all_ORFs(codons, frame, in_reading_frame=assuming_missing_start)
     
     # first ORF is 5'-most
     if not len(all_orfs):

@@ -1,28 +1,4 @@
-# findorf.py -- orf prediction and annotation
-"""
-findorf.py: ORF prediction and annotation via blastx results of close
-  relatives.
-
-findorf.py works by reading in the XML blastx results of mulitple
-queries (mRNA contigs) against several databases (run
-separately). Each XML blastx results file should correspond to a
-particular organism's protein database. With each of these relatives,
-the consensus ORF is found, and other attributes of the contig are
-added.
-
-There are two primary operations of findorf.py:
-
-1. Join all the XML blastx results with the contig FASTA file.
-
-2. Predict ORFs and annotate contigs based on the data from the join
-operation, given phylogentically-driven cutoffs to consider the
-relatives to use.
-
-These are done seperately, since one may wish to change the parameters
-and output from the predict command without having to re-run the join
-operation.
-
-"""
+#!/usr/bin/env python
 __version__ = 0.9
 
 info = """
@@ -45,14 +21,19 @@ This is necssary for later specifying relative-specific percent
 identity constraints (as integers out of 100), i.e.:
 
     at:78,90 bd:80,95
-"""
+    
+""" % __version__
 
 import sys
-import pdb
-import cPickle
+# import pdb
 import csv
-from collections import Counter, namedtuple, defaultdict
+import argparse
+import os
+
 from string import Template
+from collections import Counter, namedtuple, defaultdict
+import csv
+import cPickle
 from operator import itemgetter, attrgetter
 try:
     from Bio.Blast import NCBIXML
@@ -60,13 +41,11 @@ try:
     from Bio.Seq import Seq
 except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
-import argparse
-import os
 
 import templates
 from ContigSequence import ContigSequence, GTF_FIELDS
 
-        
+
 # Which annotation keys to include in counting.
 SUMMARY_KEYS = set(['majority_frameshift', 'orf',
                     'any_frameshift', 'missing_5prime',
@@ -74,13 +53,6 @@ SUMMARY_KEYS = set(['majority_frameshift', 'orf',
                     'missing_start', # see note at rules.predict_ORF_vanilla
                     'missing_stop', 'no_hsps_coverages',
                     'full_length', 'contains_stop'])
-
-
-def mean(x):
-    """
-    The arithematic mean.
-    """
-    return float(sum(x))/len(x) if len(x) > 0 else float('nan')
 
 def gather_start_info(contig_seqs, output_file):
     """
@@ -96,6 +68,105 @@ def gather_start_info(contig_seqs, output_file):
                             sbjct_start=h.sbjct_start,
                             frame=h.frame)
                 writer.writerow(info)
+
+
+def mean(x):
+    """
+    The arithematic mean.
+    """
+    return float(sum(x))/len(x) if len(x) > 0 else float('nan')
+
+
+def predict_orf(args):
+    """
+    First, parse the relative percenty identity arguments.
+    """
+    # initiate summary counting
+    counter = Counter()
+    counter['total'] = 0
+    
+    all_contig_seqs = cPickle.load(args.input)
+    pi_range_args = parse_percent_identity_args(args)
+    total = 0
+    for query_id, contig_seq in all_contig_seqs.items():
+        if args.verbose: # FIXME
+            if counter['total'] % 1000 == 0:
+                sys.stderr.write('.')
+
+        # Predict ORF and update contig annotation
+        contig_seq.generic_predict_ORF(args.e_value, pi_range_args)
+        contig_seq.annotate_contig()
+
+        # Increment counters for this contig's annotations.
+        for attribute, value in contig_seq.annotation.iteritems():
+            if attribute in SUMMARY_KEYS:
+                counter[attribute] += contig_seq.get_annotation(attribute) is True
+
+        counter['total'] += 1
+
+    ## Output various formats, we can make this a single loop later.
+    if args.dense is not None:
+        with args.dense as f:
+            for cs in all_contig_seqs.values():
+                if cs.has_relatives:
+                    f.write("----------------%s" % str(cs))
+    if args.gtf is not None:
+        with args.gtf as f:
+            dw = csv.DictWriter(f, GTF_FIELDS, delimiter="\t")
+            for cs in all_contig_seqs.values():
+                dw.writerow(cs.gtf_dict())
+    if args.fasta is not None:
+        with args.fasta as f:
+            for cs in all_contig_seqs.values():
+                if None not in (cs.orf, cs.majority_frame):
+                    f.write(">%s\n%s\n" % (cs.query_id, cs.orf.get_orf(cs.seq)))
+        
+    sys.stderr.write(Template(templates.out).substitute(counter))
+
+    if args.interactive:
+        contigs = all_contig_seqs
+        summary = counter
+        import code
+        import rules
+        code.InteractiveConsole(locals=dict(contigs=contigs, summary=summary, rules=rules)).interact()
+
+
+def join_blastx_results(args):
+    """
+    Each BLAST XML result file contains different alignments, each
+    with possibly multiple HSPs. The foreign key is the contig ID,
+    which is also the BLAST query ID. This of course is also the key
+    between the BLAST results and the reference contig FASTA file.
+
+    This function builds a dictionary which each key being the contig
+    ID and each value being another dictionary in which each
+    'relative' is the BLAST result file and the values are the BLAST
+    results.
+    """
+    # Load all sequences into new ContigSequence objects
+    sys.stderr.write("loading all contig sequences...\t")
+    results = dict()
+    for record in SeqIO.parse(args.ref, "fasta"):
+        results[record.id] = ContigSequence(record.id, record.seq)
+    sys.stderr.write("done\n")
+
+    # For each relative alignment, add the HSPs via ContigSequence's
+    # add_relative method
+    blast_files = parse_blastx_args(args.blastx)
+
+    for relative, blast_file in blast_files.items():
+        sys.stderr.write("processing BLAST file '%s'...\t" % relative)
+
+        for record in NCBIXML.parse(blast_file):
+            query_id = record.query.strip().split()[0]
+
+            # add the relative's alignment information
+            results[query_id].add_relative_alignment(relative, record)
+
+        sys.stderr.write("done\n")
+
+    # dump the joined results
+    cPickle.dump(results, file=args.output)
 
 def parse_blastx_args(args):
     """
@@ -144,92 +215,7 @@ def parse_percent_identity_args(args):
         raise argparse.ArgumentTypeError(msg)
     return pi_range_args
 
-def predict_orf(args):
-    """
-    First, parse the relative percenty identity arguments.
-    """
-    # initiate summary counting
-    counter = Counter()
-    counter['total'] = 0
-    
-    all_contig_seqs = cPickle.load(args.input)
-    pi_range_args = parse_percent_identity_args(args)
-    total = 0
-    for query_id, contig_seq in all_contig_seqs.items():
-        if args.verbose: # FIXME
-            if counter['total'] % 1000 == 0:
-                sys.stderr.write('.')
-
-        # Predict ORF and update contig annotation
-        contig_seq.generic_predict_ORF(args.e_value, pi_range_args)
-        contig_seq.annotate_contig()
-
-        # Increment counters for this contig's annotations.
-        for attribute, value in contig_seq.annotation.iteritems():
-            if attribute in SUMMARY_KEYS:
-                counter[attribute] += contig_seq.get_annotation(attribute) is True
-
-        counter['total'] += 1
-
-    ## Output various formats, we can make this a single loop later.
-    if args.dense is not None:
-        with args.dense as f:
-            for cs in all_contig_seqs.values():
-                if cs.has_relatives:
-                    f.write("----------------%s" % str(cs))
-    if args.gtf is not None:
-        with args.gtf as f:
-            dw = csv.DictWriter(f, GTF_FIELDS, delimiter="\t")
-            for cs in all_contig_seqs.values():
-                dw.writerow(cs.gtf_dict())
-    if args.fasta is not None:
-        with args.fasta as f:
-            for cs in all_contig_seqs.values():
-                if None not in (cs.orf, cs.majority_frame):
-                    f.write(">%s\n%s\n" % (cs.query_id, cs.orf.get_orf(cs.seq)))
-        
-    sys.stderr.write(Template(templates.out).substitute(counter))
-    return dict(contigs=all_contig_seqs, summary=counter)
-
-def join_blastx_results(args):
-    """
-    Each BLAST XML result file contains different alignments, each
-    with possibly multiple HSPs. The foreign key is the contig ID,
-    which is also the BLAST query ID. This of course is also the key
-    between the BLAST results and the reference contig FASTA file.
-
-    This function builds a dictionary which each key being the contig
-    ID and each value being another dictionary in which each
-    'relative' is the BLAST result file and the values are the BLAST
-    results.
-    """
-    # Load all sequences into new ContigSequence objects
-    sys.stderr.write("loading all contig sequences...\t")
-    results = dict()
-    for record in SeqIO.parse(args.ref, "fasta"):
-        results[record.id] = ContigSequence(record.id, record.seq)
-    sys.stderr.write("done\n")
-
-    # For each relative alignment, add the HSPs via ContigSequence's
-    # add_relative method
-    blast_files = parse_blastx_args(args.blastx)
-
-    for relative, blast_file in blast_files.items():
-        sys.stderr.write("processing BLAST file '%s'...\t" % relative)
-
-        for record in NCBIXML.parse(blast_file):
-            query_id = record.query.strip().split()[0]
-
-            # add the relative's alignment information
-            results[query_id].add_relative_alignment(relative, record)
-
-        sys.stderr.write("done\n")
-
-    # dump the joined results
-    cPickle.dump(results, file=args.output)
-
-
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description=info)
     subparsers = parser.add_subparsers(help="sub-commands")
 
@@ -273,7 +259,10 @@ if __name__ == "__main__":
     parser_predict.add_argument('-v', '--verbose', action="store_true",
                                 default=False,
                                 help="Output a period every 1,000 contigs predicted")
-
+    parser_predict.add_argument('-I', '--interactive', action="store_true",
+                                default=False,
+                                help="drop into interactive mode after prediction")
+    
     parser_predict.add_argument('-i', type=str, nargs="+",
                                 default=None,
                                 help=("A relative-specific percent identity "

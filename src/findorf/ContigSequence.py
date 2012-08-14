@@ -56,7 +56,8 @@ from rules import predict_ORF_frameshift, predict_ORF_missing_5prime
 from rules import predict_ORF_vanilla
 from rules import get_ORF_overlaps_5prime_HSP
 from rules import annotate_ORF, START_CODONS, STOP_CODONS
-from templates import anchor_hsps_repr, hsp_repr, orf_repr, contig_sequence_repr
+from templates import anchor_hsps_repr, hsp_repr
+from templates import orf_repr, contig_sequence_repr
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
               "end", "score", "strand", "frame", "group")
@@ -330,7 +331,10 @@ class ContigSequence():
         out["seqname"] = self.query_id
         out["source"] = "findorf"
         out["feature"] = "predicted_orf"
-        out["start"] = self.orf.query_start if self.orf is not None else '.'
+        # we increment the start because GTF is 1-indexed, but not for
+        # the end, since we want the ORF to (but not including) the
+        # stop codon.
+        out["start"] = self.orf.query_start + 1 if self.orf is not None else '.'
         out["end"] = self.orf.query_end if self.orf is not None else '.'
         out["score"] = "."
 

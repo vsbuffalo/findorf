@@ -16,7 +16,7 @@ except ImportError, e:
 from collections import namedtuple
 import pdb
 from operator import attrgetter, itemgetter
-import ContigSequence 
+import ContigSequence
 
 ## Biological constants
 STOP_CODONS = set(["TAG", "TGA", "TAA"])

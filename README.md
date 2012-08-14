@@ -1,4 +1,4 @@
-# findorf: ORF prediction & assembly annotation
+# findorf: ORF prediction of de novo transcriptome assemblies
 
 `findorf` is an ORF prediction and transcriptome contig annotation
 tool that uses the results of separate BLASTX results against close

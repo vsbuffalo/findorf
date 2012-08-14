@@ -128,6 +128,13 @@ def predict_orf(args):
         summary = counter
         import code
         import rules
+        try:
+            import readline
+        except ImportError:
+            pass
+        else:
+            import rlcompleter
+            readline.parse_and_bind("tab: complete")                    
         code.InteractiveConsole(locals=dict(contigs=contigs, summary=summary, rules=rules)).interact()
 
 

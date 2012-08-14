@@ -13,6 +13,10 @@ codons, and frameshifts.
 
 ## Installation
 
+Installation is easy: just clone or download this repository and enter
+in the directory:
+
+    python setup.py install
 
 ## `findorf` Join
 

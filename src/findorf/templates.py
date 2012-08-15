@@ -56,7 +56,7 @@ full length orfs: $full_length
 missing 5': $missing_5prime
 missing start codon: $missing_start
 missing stop codon: $missing_stop
-closest relative frameshift: $cr_frameshift
+closest rels anchor HSPs in diff frame: $closest_relative_anchor_hsps_diff_frame
 majority frameshift: $majority_frameshift
 any frameshift: $any_frameshift
 contains stop codon: $contains_stop

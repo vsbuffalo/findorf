@@ -603,7 +603,7 @@ class ContigSequence():
             ## candidate that overlaps the 5'-most HSP
             if orfs is not None:
                 self.all_orfs = orfs
-                overlap_tuple = get_ORF_overlaps_5prime_HSP(orfs, anchor_hsps)
+                overlap_tuple = get_ORF_overlaps_5prime_HSP(orfs, anchor_hsps, self.len)
                 if overlap_tuple is None:
                     self.add_annotation({'orf_hsp_coverage':False})
                     return
@@ -615,7 +615,7 @@ class ContigSequence():
                 # closest relative does
                 cr_ahsp = anchor_hsps[relative]
                 cr_fs = cr_ahsp.most_5prime.frame != cr_ahsp.most_3prime.frame
-                self.add_annotation({'closest_relative_frameshift':cr_fs})
+                self.add_annotation({'closest_relative_anchor_hsps_diff_frame':cr_fs})
                 
                 # with an ORF, we annotate it
                 orf_annotation = annotate_ORF(anchor_hsps, orf)

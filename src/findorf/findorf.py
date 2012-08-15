@@ -49,7 +49,7 @@ from ContigSequence import ContigSequence, GTF_FIELDS
 # Which annotation keys to include in counting.
 SUMMARY_KEYS = set(['majority_frameshift', 'orf',
                     'any_frameshift', 'missing_5prime',
-                    'has_relatives', 'closest_relative_frameshift',
+                    'has_relatives', 'closest_relative_anchor_hsps_diff_frame',
                     'missing_start', # see note at rules.predict_ORF_vanilla
                     'missing_stop', 'no_hsps_coverages',
                     'full_length', 'contains_stop'])
@@ -118,8 +118,14 @@ def predict_orf(args):
     if args.fasta is not None:
         with args.fasta as f:
             for cs in all_contig_seqs.values():
-                if None not in (cs.orf, cs.majority_frame):
+                if None not in (cs.orf):
                     f.write(">%s\n%s\n" % (cs.query_id, cs.orf.get_orf(cs.seq)))
+    if args.protein is not None:
+        with args.protein as f:
+            for cs in all_contig_seqs.values():
+                if None not in (cs.orf):
+                    f.write(">%s\n%s\n" % (cs.query_id, cs.orf.get_orf(cs.seq).translate()))
+
         
     sys.stderr.write(Template(templates.out).substitute(counter))
 
@@ -244,6 +250,7 @@ def main():
 
     ## predict arguments
     parser_predict = subparsers.add_parser('predict', help="predict ORFs")
+
     parser_predict.add_argument('--input', type=argparse.FileType('rb'),
                                 default="joined_blastx_dbs.pkl",
                                 help=("the joined results of all BLASTX "
@@ -278,6 +285,9 @@ def main():
     parser_predict.add_argument('-o', '--fasta', type=argparse.FileType('w'), 
                                 default=None,
                                 help="FASTA file to output full length ORFs")
+    parser_predict.add_argument('-p', '--protein', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output translated proteins")
 
     parser_predict.set_defaults(func=predict_orf)
 
@@ -285,3 +295,6 @@ def main():
 
     ## Run the appropriate step
     results = args.func(args)
+
+if __name__ == "__main__":
+    main()

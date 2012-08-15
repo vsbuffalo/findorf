@@ -90,7 +90,7 @@ def any_overlap(range_a, range_b, closed=True):
     if not closed:
         return b_start < a_end and a_start < b_end
 
-def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps, allow_one_side=True):
+def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps, query_length, allow_one_side=True):
     """
     Return the (relative, ORF) tuple with start_pos and stop_pos that
     have *any* overlap with the 5'-most anchor HSP of the closest
@@ -111,10 +111,34 @@ def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps, allow_one_side=True):
     relative, ahsp = get_closest_relative_anchor_HSP(anchor_hsps)
     m5p_hsp = ahsp.most_5prime
 
+    # if our ORF is on the reverse strand, we need to convert
+    # these coordinates to the forward strand. For example, if we
+    # have frame = -1, a blast hit at (62, 90) is more 3' than
+    # (450, 900). As a result, we need to take the query_start and
+    # query_end and subtract each from the query_length, and add 1
+    # (because everything is 1-indexed). Then, we reverse them.
+    if m5p_hsp.frame < 0:
+        m5p_start = query_length - m5p_hsp.query_end + 1
+        m5p_end = query_length - m5p_hsp.query_start + 1
+    else:
+        m5p_start = m5p_hsp.query_start
+        m5p_end = m5p_hsp.query_end
+
+    try:
+        assert(m5p_start < m5p_end)
+    except AssertionError, e:
+        import pdb
+        pdb.set_trace()
+        print "most 5' frame", m5p_hsp.frame
+        print "most 5' start", m5p_start
+        print "most 5' end", m5p_end    
+
     for orf in orf_list:
         if orf is None:
             continue
         qstart, qend = orf.query_start, orf.query_end
+
+        
         if None in (qstart , qend):
             if not allow_one_side:
                 continue
@@ -123,9 +147,9 @@ def get_ORF_overlaps_5prime_HSP(orf_list, anchor_hsps, allow_one_side=True):
             if qstart is None:
                 qstart = 0
             if qend is None:
-                qend = float('inf')            
+                qend = float('inf')
         has_overlap = any_overlap((qstart, qend),
-                                  (m5p_hsp.query_start, m5p_hsp.query_end))
+                                  (m5p_start, m5p_end))
 
         if has_overlap:
             return (relative, orf)
@@ -195,14 +219,20 @@ def contains_internal_stop_codon(anchor_hsps, predicted_orf):
     case the closest relative's proteins are misannotated.
     """
 
-    most_3prime = None
     for relative, ahsp in anchor_hsps.iteritems():
         this_ahsp = ahsp.most_3prime
-        return this_ahsp.query_start > predicted_orf.query_end
+        # we handle the forward strand case: 3' anchor HSP has a start
+        # *after* the ORF end, and the reverse strand case; the 3'
+        # anchor HSP has an end less than the 
+        if predicted_orf.frame > 0:
+            return this_ahsp.query_start > predicted_orf.query_end
+        else:
+            assert(this_ahsp.query_start < this_ahsp.query_end)
+            return this_ahsp.query_end < predicted_orf.query_end
     return False
 
 
-def get_all_ORFs(codons, frame, in_reading_frame=False):
+def get_all_ORFs(codons, frame, query_length, in_reading_frame=False):
     """
     Generic ORF finder; it returns a list of all ORFs as they are
     found, given codons (a list if tuples in the form (codon,
@@ -233,10 +263,12 @@ def get_all_ORFs(codons, frame, in_reading_frame=False):
             orf_start_pos = None
             query_start_pos = None
 
-    # add an partial ORFs, and mark as having no stop codon
+    # add an partial ORFs, and mark as having no stop codon. If this
+    # is the case, the end position is not the orf_pos and query_pos,
+    # but rather the end of the sequence.
     if in_reading_frame:
-        all_orfs.append(ContigSequence.ORF(orf_start_pos, orf_pos,
-                                           query_start_pos, query_pos,
+        all_orfs.append(ContigSequence.ORF(orf_start_pos, query_length,
+                                           query_start_pos, query_length,
                                            frame,
                                            no_start=query_start_pos is None,
                                            no_stop=True))
@@ -266,7 +298,7 @@ def predict_ORF_frameshift(seq, anchor_hsps, missing_5prime, key='e'):
     codons = get_codons(seq, frame_5prime_hsp)
 
     # missing 5'-end so we're assuming we're already reading.
-    all_orfs = get_all_ORFs(codons, frame_5prime_hsp, missing_5prime)
+    all_orfs = get_all_ORFs(codons, frame_5prime_hsp, len(seq), missing_5prime)
     
     if not len(all_orfs):
         return None
@@ -290,7 +322,7 @@ def predict_ORF_missing_5prime(seq, frame):
 
     codons = get_codons(seq, frame)
 
-    all_orfs = get_all_ORFs(codons, frame, in_reading_frame=True)
+    all_orfs = get_all_ORFs(codons, frame, len(seq), in_reading_frame=True)
 
     if not len(all_orfs):
         return None
@@ -333,7 +365,8 @@ def predict_ORF_vanilla(seq, frame, assuming_missing_start=False):
     """
     codons = get_codons(seq, frame)
 
-    all_orfs = get_all_ORFs(codons, frame, in_reading_frame=assuming_missing_start)
+    all_orfs = get_all_ORFs(codons, frame, len(seq),
+                            in_reading_frame=assuming_missing_start)
     
     # first ORF is 5'-most
     if not len(all_orfs):

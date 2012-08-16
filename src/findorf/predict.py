@@ -8,17 +8,9 @@ can be applied to infer ORFs and annotation.
 
 """
 
+from Contig import Contig
 
-try:
-    from Bio.Seq import Seq
-except ImportError, e:
-    sys.exit("Cannot import BioPython modules; please install it.")
-from collections import namedtuple
-import pdb
-from operator import attrgetter, itemgetter
-import ContigSequence
-
-## Biological constants
+## Biological constants TODO get from BioPython
 STOP_CODONS = set(["TAG", "TGA", "TAA"])
 START_CODONS = set(["ATG"])
 

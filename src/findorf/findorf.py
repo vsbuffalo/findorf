@@ -43,7 +43,7 @@ except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
 
 import templates
-from ContigSequence import ContigSequence, GTF_FIELDS
+from Contig import Contig, GTF_FIELDS
 
 
 # Which annotation keys to include in counting.
@@ -133,30 +133,31 @@ def join_blastx_results(args):
     'relative' is the BLAST result file and the values are the BLAST
     results.
     """
-    # Load all sequences into new ContigSequence objects
-    sys.stderr.write("loading all contig sequences...\t")
-    results = dict()
+    # Load all sequences into new Contig objects
+    contigs = dict()
+    sys.stderr.write("[join] loading all contig sequences...\t")
     for record in SeqIO.parse(args.ref, "fasta"):
-        results[record.id] = ContigSequence(record.id, record.seq)
-    sys.stderr.write("done\n")
-
-    # For each relative alignment, add the HSPs via ContigSequence's
+        contigs[record.id] = Contig(record)
+    sys.stderr.write("done.\n")
+    
+    # For each relative alignment, add the HSPs via Contig's
     # add_relative method
     blast_files = parse_blastx_args(args.blastx)
 
     for relative, blast_file in blast_files.items():
-        sys.stderr.write("processing BLAST file '%s'...\t" % relative)
+        sys.stderr.write("[join] processing BLAST file '%s'...\t" % relative)
 
         for record in NCBIXML.parse(blast_file):
             query_id = record.query.strip().split()[0]
 
-            # add the relative's alignment information
-            results[query_id].add_relative_alignment(relative, record)
+            # add the relative's alignment information, which actually
+            # adds HSPs to relative HSPs attribute
+            contigs[query_id].add_relative_alignment(relative, record)
 
-        sys.stderr.write("done\n")
+        sys.stderr.write("done.\n")
 
-    # dump the joined results
-    cPickle.dump(results, file=args.output)
+    # dump the joined contigs
+    cPickle.dump(contigs, file=args.output)
 
 def parse_blastx_args(args):
     """

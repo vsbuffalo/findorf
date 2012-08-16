@@ -50,149 +50,40 @@ try:
 except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
 
-from rules import get_closest_relative_anchor_HSP
-from rules import get_anchor_HSPs
-from rules import predict_ORF_frameshift, predict_ORF_missing_5prime
-from rules import predict_ORF_vanilla
-from rules import get_ORF_overlaps_5prime_HSP
-from rules import annotate_ORF, START_CODONS, STOP_CODONS
-from templates import anchor_hsps_repr, hsp_repr
-from templates import orf_repr, contig_sequence_repr
+from HSPs
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
-              "end", "score", "strand", "frame", "group")
+              "end", "score", "strand", "frame", "group")        
 
-class ORF():
+class Contig():
     """
-    ORF represents an ORF prediction.
-    """
+    Contig represents a contig from the assembly, and has attributes
+    and methods to add more information or make predictions about this
+    conitg.
 
-    def __init__(self, start, end, query_start, query_end,
-                 frame, no_start=False, no_stop=False):
-        self.start = start
-        self.end = end
-        self.query_start = query_start
-        self.query_end = query_end
-        self.frame = frame
-        self.no_stop = no_stop
-        self.no_start = no_start
-        
-    @property
-    def length_bp(self):
-        if None in (self.query_end, self.query_start):
-            return None
-        return abs(self.query_end - self.query_start)
-
-    @property
-    def length_aa(self):
-        if None in (self.query_end, self.query_start):
-            return None
-        return int(floor(abs(self.query_end - self.query_start)/3))
-
-    def __repr__(self):
-        info = dict(start=self.start, end=self.end,
-                    query_end=self.query_end,
-                    query_start=self.query_start,
-                    length_bp=self.length_bp,
-                    length_aa=self.length_aa,
-                    frame=self.frame,
-                    missing_start=self.no_start,
-                    missing_stop=self.no_stop)
-        return Template(orf_repr).substitute(info)
-
-    def get_orf(self, query_seq, include_stop=True):
-        if self.frame < 0:
-            query_seq = query_seq.reverse_complement()
-        end = self.query_end
-        if include_stop:
-            end += 3
-
-        # if we don't have a query start (is None), we make it the
-        # absolute value of the frame minus 1, which is the 0-indexed
-        # start.
-        start = self.query_start
-        if start is None:
-            start = abs(self.frame) - 1
-        return query_seq[start:end]
-
-class HSP():
-    """
-    HSP represents a High-scoring Segment Pair from BLAST. BioPython
-    has an HSP class, but for ORF prediction, a smaller subset of the
-    attributes are needed.
-    """
-    def __init__(self, e, identities, length, percent_identity, title,
-                 query_start, query_end, sbjct_start, sbjct_end, frame):
-        self.e = e
-        self.identities = identities
-        self.length = length
-        self.percent_identity = percent_identity
-        self.title = title
-        self.query_start = query_start
-        self.query_end = query_end
-        self.sbjct_start = sbjct_start
-        self.sbjct_end = sbjct_end
-        self.frame = frame
-
-    def __repr__(self):
-        info = dict(identities=self.identities,
-                    percent_identity=round(self.percent_identity, 3),
-                    length=self.length,
-                    e=round(self.e, 12),
-                    frame=self.frame,
-                    query_start=self.query_start,
-                    query_end=self.query_end,
-                    sbjct_start=self.sbjct_start,
-                    sbjct_end=self.sbjct_end)
-        return Template(hsp_repr).substitute(info)
-
-
-class AnchorHSPs():
-    def __init__(self, most_5prime, most_3prime, strand):
-        self.most_5prime = most_5prime
-        self.most_3prime = most_3prime
-        self.strand = strand
-
-    def _indent_hsp(self, hsp, tab="  "):
-        out = ""
-        for line in repr(hsp).split("\n"):
-            out += tab + line + "\n"
-        return out
-
-    def __repr__(self):
-        info = dict(strand=self.strand,
-                    most_3prime=self._indent_hsp(self.most_3prime),
-                    most_5prime=self._indent_hsp(self.most_5prime))
-        
-        return Template(anchor_hsps_repr).substitute(info)
-
-    def __iter__(self):
-        for x in [self.most_5prime, self.most_3prime, self.strand]:
-            yield x
-         
-        
-class ContigSequence():
-    """
-    ContigSequence represents an assembled contig, that may be coding
-    or non-coding. It contains all information about the its sequence
-    and the blastx results to its relatives.
     """
 
-    def __init__(self, query_id, sequence):
+    def __init__(self, record):
         """
-        Initialize a ContigSequence with a contig ID and sequence. The
-        contig ID must correspond to the same one used in the blastx
-        results.
+        Initialize a Contig. The record.id must correspond to the same
+        one used in the blastx results.
+
+        Any ORF predictions will be stored as SeqFeatures on this
+        Contig.
+
+        We don't subclass SeqRecord here because we don't use their
+        SeqFeatures with it - they are too weak in terms of look at
+        overlap. It's easier to store particular features (anchorHSPs,
+        ORF candidates) as dict or list attributes here.
         """
         # core data attributes
-        self.query_id = query_id
-        self.seq = sequence
-        self.len = len(sequence)
+        self.id = record.id
+        self.seq = record.seq
 
         # information added by blastx results
-        self.all_relatives = defaultdict(list)
+        self.all_relatives = 
 
-        # ORF and annotation attributes
+        # Annotation attributes
         self.orf = None
         self.all_orfs = None
         self.annotation = dict()
@@ -203,6 +94,12 @@ class ContigSequence():
         # command line script run would, if python -i was called.
         self._e_value = None
         self._pi_range = None
+
+    def __len__(self):
+        """
+        Return the contig length.
+        """
+        return len(self.seq)
         
     def __repr__(self):
         cr_anchor_hsp = get_closest_relative_anchor_HSP(self.get_anchor_HSPs())
@@ -226,99 +123,7 @@ class ContigSequence():
             info['seq'] = None
         
         out = Template(contig_sequence_repr).substitute(info)
-        return out
-    
-    def annotate_contig(self):
-        """
-        Annotate the contig, based on some attributes. We add these to
-        a dictionary so cross-contig annotation counting is easier.
-        """
-        self.annotation['has_relatives'] = self.has_relatives
-        self.annotation['num_relatives'] = self.num_relatives
-        self.annotation['length'] = self.len
-        self.annotation['majority_frameshift'] = self.majority_frameshift
-        self.annotation['any_frameshift'] = self.any_frameshift
-        
-    def get_annotation(self, key):
-        """
-        Get annotation from key, or return None if it doesn't exist.
-        """
-        return self.annotation.get(key, None)
-
-    def add_orf_prediction(self, orf):
-        """
-        Add a ORF.
-        """
-        self.orf = orf
-
-    def add_annotation(self, annotation):
-        """
-        Annotation is just a dictinary of key-value pairs; this append
-        those (or updates them if they exist)
-        """
-        self.annotation = dict(self.annotation.items() + annotation.items())
-        
-
-    def get_relatives(self):
-        """
-        Return relatives that pass thresholding filters.
-        
-        The `add_relative` method adds relatives' HSPs to a dictionary
-        attribute, `all_relatives`. However, in most cases, we want to
-        use a subset of these relatives that satisfy requirements
-        based on phylogenetic requirements, i.e. requiring a relative
-        HSP have a percent identity consistent with evolutionary
-        distance. These constraints are run (via command line)
-        specific, and are `_e_value` and `_pi_range`.
-
-        If `_e_value` or `_pi_range` are None, they are not used for
-        filtering `all_relatives`.
-        """
-        if self._e_value is None and self._pi_range is None:
-            return self.all_relatives
-
-        # little funcs for e-value filtering
-        e_thresh = lambda x: x.e <= self._e_value
-
-        filtered_relatives = defaultdict(list)
-        for relative, hsps in self.all_relatives.items():
-
-            filters = [(self._e_value, e_thresh)]
-            # make a custom filter closure for this relative's range;
-            # if a relative's range is None, we don't filter on it.
-            
-            if self._pi_range is not None:
-                rng = self._pi_range[relative]
-                in_range = (lambda x:
-                            rng is None or rng[0] <= x.percent_identity <= rng[1])
-                filters.append((self._pi_range, in_range))
-
-            for h in hsps:
-                if all([fun(h) for arg, fun in filters if arg is not None]):
-                    filtered_relatives[relative].append(h)
-
-        return filtered_relatives
-
-    @property
-    def num_relatives(self):
-        """
-        Return the number of relatives.
-        """
-        num_relatives = 0
-        for relative, hsps in self.all_relatives.items():
-            if len(hsps) > 0:
-                num_relatives += 1
-        return num_relatives
-
-    @property
-    def has_relatives(self):
-        """
-        Return True or False depending on whether the number of
-        relatives is greater than 0.
-
-        """
-        return self.num_relatives > 0
-        
+        return out        
         
     def gff_dict(self):
         """
@@ -399,6 +204,8 @@ class ContigSequence():
                       frame=hsp.frame[0])
 
             self.all_relatives[relative].append(hsp)
+
+        # Now, out of these HSPs, 
 
     @property
     def frames(self):

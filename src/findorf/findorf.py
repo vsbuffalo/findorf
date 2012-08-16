@@ -54,29 +54,6 @@ SUMMARY_KEYS = set(['majority_frameshift', 'orf',
                     'missing_stop', 'no_hsps_coverages',
                     'full_length', 'contains_stop'])
 
-def gather_start_info(contig_seqs, output_file):
-    """
-    Gather information on the query and subject start positions.
-    """
-    fn = ['id', 'relative', 'query_start', 'sbjct_start', 'frame']
-    writer = csv.DictWriter(output_file, fieldnames=fn, delimiter="\t")
-    for id, cs in contig_seqs.iteritems():
-        for relative, hsps in cs.all_relatives.iteritems():
-            for h in hsps:
-                info = dict(id=id, relative=relative,
-                            query_start=h.query_start,
-                            sbjct_start=h.sbjct_start,
-                            frame=h.frame)
-                writer.writerow(info)
-
-
-def mean(x):
-    """
-    The arithematic mean.
-    """
-    return float(sum(x))/len(x) if len(x) > 0 else float('nan')
-
-
 def predict_orf(args):
     """
     First, parse the relative percenty identity arguments.
@@ -85,7 +62,7 @@ def predict_orf(args):
     counter = Counter()
     counter['total'] = 0
     
-    all_contig_seqs = cPickle.load(args.input)
+    all_contig_seqs = cPickle.load(open(args.input, 'rb'))
     pi_range_args = parse_percent_identity_args(args)
     total = 0
     for query_id, contig_seq in all_contig_seqs.items():
@@ -251,7 +228,7 @@ def main():
     ## predict arguments
     parser_predict = subparsers.add_parser('predict', help="predict ORFs")
 
-    parser_predict.add_argument('--input', type=argparse.FileType('rb'),
+    parser_predict.add_argument('--input', type=str,
                                 default="joined_blastx_dbs.pkl",
                                 help=("the joined results of all BLASTX "
                                       "files (Python pickle file; from "

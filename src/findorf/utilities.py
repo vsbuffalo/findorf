@@ -6,39 +6,63 @@ sequences in frame, etc.
 
 from Bio.Seq import Seq
 
-def put_seq_in_frame(seq, frame):
-    """
-    Take a sequence (of Bio.Seq class) and transform it to into the
-    correct frame.
-    """
-    if frame < 0:
-        try:
-            seq = seq.reverse_complement()
-        except AttributeError:
-            msg = "no reverse_complement() method; 'seq' must of class Bio.Seq.Seq"
-            raise AttributeError, msg
-        frame = -1*frame
-    if not frame in range(1, 4):
-        raise Exception, "improper frame: frame must be in [1, 3]"
-    return seq[(frame-1):]
-
-
 def get_codons(seq, frame):
     """
-    Return a list of (codon, position_in_orf, pos_in_forward_query) tuples.
+    Return a list of (codon, position_in_orf, pos_in_forward_query)
+    tuples, on the foward strand.
     """
-
+    # for user friendliness with interactive shell, if seq is a
+    # string, convert it to Bio.Seq.Seq
+    if type(seq) is str:
+        seq = Seq(seq)
+        
     if frame < 0:
-        try:
-            seq = seq.reverse_complement()
-        except AttributeError:
-            msg = "no reverse_complement() method; 'seq' must of class Bio.Seq.Seq"
-            raise AttributeError, msg
-        frame = abs(frame)
-
+        seq = seq.reverse_complement()
+        
+    frame = abs(frame)
     tmp = [(str(seq[pos:pos+3]), pos-(frame-1), pos) for
            pos in range(frame-1, len(seq), 3)]
-
+    
     # remove the last string if not a full codon.
     return [(c, po, pfq) for c, po, pfq in tmp if len(c) == 3]
+
+
+def get_all_orfs(seq, frame, in_reading_frame=False):
+    """
+    Generic ORF finder; it returns a list of all ORFs as they are
+    found, given codons (a list if tuples in the form (codon,
+    position)) from `get_codons`.
+    """
+    
+    all_orfs = list()
+    orf_start_pos = None
+    query_start_pos = None
+
+    codons = get_codons(seq, frame)
+    
+    # Note that query_pos is forward strand.
+    for codon, orf_pos, query_pos in codons:
+        if codon in START_CODONS and not in_reading_frame:
+            in_reading_frame = True
+            orf_start_pos = orf_pos
+            query_start_pos = query_pos
+            continue
+        if in_reading_frame and codon in STOP_CODONS:
+            # a full reading frame, unless we haven't hit any stop
+            # yet, then we're in the possible ORF from the start of
+            # the query to the end.
+            all_orfs.append(ORF(query_start_pos, query_pos,
+                                frame, no_start=query_start_pos is None))
+            
+            in_reading_frame = False
+            orf_start_pos = None
+            query_start_pos = None
+            
+        # add an partial ORFs, and mark as having no stop codon
+        if in_reading_frame:
+            all_orfs.append(ORF(query_start_pos, query_pos,
+                                frame, no_start=query_start_pos is None,
+                                no_stop=True))
+            
+    return all_orfs
 

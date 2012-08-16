@@ -29,6 +29,7 @@ except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
 
 from RangedFeatures import HSP, AnchorHSPs, RelativeHSPs
+import predict
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
               "end", "score", "strand", "frame", "group")        
@@ -112,11 +113,12 @@ class Contig():
     def has_relatives(self):
         return len(self.relative_hsps) > 0
 
-    def predict_orf(self, e_value=None, pi_range=None):
+    def predict_orf(self, e_value=None, pi_range=None, qs_thresh=16, ss_thresh=40):
         """
         Predict an ORF, given some parameters.
 
-        1. Frameshift? If so, check 5' missing,
+        1. Frameshift?
+          1.1. Missing 5' also?
 
         2. 5' missing?
 
@@ -128,21 +130,24 @@ class Contig():
         rel_hsps = self.relative_hsps.get_relatives(e_value, pi_range)
         self.filtered_relative_hsps = rel_hsps
 
+        frame = self.relative_hsps.majority_frame
+        cr_ahsps = self.relative_hsps.closest_relative_anchor_hsps()
+        missing_5prime = rel_hsps.missing_5prime(qs_thresh, ss_thresh)
+
         ## 1. Frameshift?
         if rel_hsps.majority_frame:
+            # note that we're handliny 1.1 (missing 5')
+            predict.orf_with_frameshift(self.seq, cr_ahsps, missing_5prime)          
 
-            ## 1.1 Frameshift and missing 5'?
-            if rel_hsps.missing_5prime:
-                pass
-            else:
-                pass
         # 2. Missing 5'?
         elif rel_hsps.missing_5prime:
-            pass
+            predict.orf_with_missing_5prime(self.seq, frame)
 
         # 3. Vanilla prediction
         else:
-            pass
+            predict.orf_vanilla(self.seq, frame)
+
+        
             
             
         

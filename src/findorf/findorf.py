@@ -29,7 +29,7 @@ import sys
 import csv
 import argparse
 import os
-
+import code
 from string import Template
 from collections import Counter, namedtuple, defaultdict
 import csv
@@ -55,18 +55,17 @@ SUMMARY_KEYS = set(['majority_frameshift', 'orf',
                     'full_length', 'contains_stop'])
 
 def go_interactive(contigs, summary):
-    if args.interactive:
-        try:
-            import readline
-            import utilities
-        except ImportError:
-            pass
-        else:
-            import rlcompleter
-            readline.parse_and_bind("tab: complete")                    
-
-        code.InteractiveConsole(locals=dict(contigs=contigs, summary=summary,
-                                            u=utilities)).interact()
+    try:
+        import readline
+        import utilities
+    except ImportError:
+        pass
+    else:
+        import rlcompleter
+        readline.parse_and_bind("tab: complete")                    
+        
+    code.InteractiveConsole(locals=dict(contigs=contigs, summary=summary,
+                                        u=utilities)).interact()
 
 
 def predict_orf(args):
@@ -76,50 +75,26 @@ def predict_orf(args):
     # initiate summary counting
     counter = Counter()
     counter['total'] = 0
-    
+
+    sys.stderr.write("[predict] loading contig objects...")
     all_contigs = cPickle.load(open(args.input, 'rb'))
+    sys.stderr.write("\tdone.\n")
+    
     pi_range_args = parse_percent_identity_args(args)
-    total = 0
+
     for query_id, contig in all_contigs.items():
-        # if args.verbose: # FIXME
-        #     if counter['total'] % 1000 == 0:
-        #         sys.stderr.write('.')
-
         # Predict ORF and update contig annotation
-        contig.predict_orf(args.e_value, pi_range_args)
+        orf = contig.predict_orf(args.e_value, pi_range_args)
+        counter['total'] += 1
 
-        # # Increment counters for this contig's annotations.
-        # for attribute, value in contig_seq.annotation.iteritems():
-        #     if attribute in SUMMARY_KEYS:
-        #         counter[attribute] += contig_seq.get_annotation(attribute) is True
+    print "total", counter['total']
+    
+    if args.interactive:
+        go_interactive(all_contigs, None)
 
-        # counter['total'] += 1
-
-    # ## Output various formats, we can make this a single loop later.
-    # if args.dense is not None:
-    #     with args.dense as f:
-    #         for cs in all_contig_seqs.values():
-    #             if cs.has_relatives:
-    #                 f.write("----------------%s" % str(cs))
-    # if args.gtf is not None:
-    #     with args.gtf as f:
-    #         dw = csv.DictWriter(f, GTF_FIELDS, delimiter="\t")
-    #         for cs in all_contig_seqs.values():
-    #             dw.writerow(cs.gtf_dict())
-    # if args.fasta is not None:
-    #     with args.fasta as f:
-    #         for cs in all_contig_seqs.values():
-    #             if None not in (cs.orf):
-    #                 f.write(">%s\n%s\n" % (cs.query_id, cs.orf.get_orf(cs.seq)))
-    # if args.protein is not None:
-    #     with args.protein as f:
-    #         for cs in all_contig_seqs.values():
-    #             if None not in (cs.orf):
-    #                 f.write(">%s\n%s\n" % (cs.query_id, cs.orf.get_orf(cs.seq).translate()))
-
-    # sys.stderr.write(Template(templates.out).substitute(counter))
-    go_interactive(all_contig_seqs, summary)
-
+    # for debugging with python -i
+    return all_contigs
+        
 
 def join_blastx_results(args):
     """
@@ -272,7 +247,7 @@ def main():
     args = parser.parse_args()
 
     ## Run the appropriate step
-    results = args.func(args)
+    return args.func(args)
 
 if __name__ == "__main__":
-    main()
+    out = main()

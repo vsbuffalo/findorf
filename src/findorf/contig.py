@@ -1,7 +1,7 @@
 """
 Contig
 
-# BLASTX Output Notes
+# Blastx Output Notes
 
 Alignments with a negative frame (that is the reverse complement of
 the contig maps to the subject protein), have a `query_start` that
@@ -63,9 +63,20 @@ class Contig():
         self.relative_hsps = RelativeHSPs()
 
         # Annotation attributes
-        self.orf = None ## This will be a BioPython SeqFeature
-        self.all_orfs = None
+        self.orf = None
+        self.orf_candidates = list()
         self.annotation = dict()
+
+    def __repr__(self):
+        info = dict(id=self.id, len=len(self),
+                    num_relatives=len(self.relative_hsps))
+        msg = Template("""Contig instance for ID: $id
+length: $len
+number of relatives: $num_relatives
+""").substitute(info)
+
+        return msg
+
 
     def __len__(self):
         """
@@ -108,8 +119,31 @@ class Contig():
                       frame=hsp.frame[0])
 
             self.relative_hsps.add_relative_hsp(relative, hsp)
+
+    def add_annotation(self, key, value):
+        """
+        Add annotation, keeping track of consistency.
+        """
+        self.annotation[key] = value
         
+    def get_annotation(self, key=None):
+        """
+        Get annotation from the annotation dict, but return None if
+        there is something is not defined.
+        """
+        if key is not None:
+            return self.annotation.get(key, None)
         
+        current_anno = self.annotation.items()
+        attribute_anno = [('has_relatives', self.has_relatives),
+                          ('num_relatives', len(self.relative_hsps)),
+                           ('has_orf', self.orf is not None),
+                           ('num_orf_candidates', len(self.orf_candidates))]
+
+        return dict(current_anno + attribute_anno)
+        
+
+    @property
     def has_relatives(self):
         return len(self.relative_hsps) > 0
 
@@ -124,30 +158,74 @@ class Contig():
 
         3. Vanilla
         """
+        print "predicting ORF for contig", self.id
+        
+        if not self.has_relatives:
+            return None
 
-        # filter by the parameters; we use these filtered cases from
-        # now on.
+        # Filter by the parameters by getting only the relative HSPs
+        # that satisfy our e-value and percent identity requirements;
+        # we use these filtered cases from now. This is where
+        # self.relative_hsps and rel_hsp can differ.
         rel_hsps = self.relative_hsps.get_relatives(e_value, pi_range)
         self.filtered_relative_hsps = rel_hsps
 
-        frame = self.relative_hsps.majority_frame
-        cr_ahsps = self.relative_hsps.closest_relative_anchor_hsps()
-        missing_5prime = rel_hsps.missing_5prime(qs_thresh, ss_thresh)
+        # it's possible that self.relative_hsps has relatives, but the
+        # filtered rel_hsps does not. If this is the case, we return
+        # None
 
+        if not rel_hsps.has_relatives:
+            return None
+
+        print self.id, "has relatives, continuing..."
+
+        # get the frame and closest relative anchor HSPs and whether
+        # the HSPs lie on different strands (really degenerate case).
+        frame = rel_hsps.majority_frame
+        inconsistent_strand = rel_hsps.inconsistent_strand
+        self.add_annotation('inconsistent_strand', inconsistent_strand)
+        
+        if inconsistent_strand:
+            return None
+        
+        closest_relative, cr_ahsps = rel_hsps.closest_relative_anchor_hsps()
+        self.cr_ahsps = cr_ahsps # for interactive debugging
+        self.add_annotation('closest_relative', closest_relative)
+        
+        # get whether the relative HSPs indicate a missing 5' or frameshift 
+        missing_5prime = rel_hsps.missing_5prime(len(self), qs_thresh, ss_thresh)
+        self.add_annotation('missing_5prime', missing_5prime)
+        majority_frameshift = rel_hsps.majority_frameshift
+        self.add_annotation('majority_frameshift', majority_frameshift)
+        
         ## 1. Frameshift?
-        if rel_hsps.majority_frame:
-            # note that we're handliny 1.1 (missing 5')
-            predict.orf_with_frameshift(self.seq, cr_ahsps, missing_5prime)          
+        if majority_frameshift:
+            # note that we're handling 1.1 (passing in missing 5' as
+            # whether we're in reading frame).
+            orf_candidates = predict.orf_with_frameshift(self.seq, cr_ahsps,
+                                                         missing_5prime)          
 
         # 2. Missing 5'?
-        elif rel_hsps.missing_5prime:
-            predict.orf_with_missing_5prime(self.seq, frame)
+        elif missing_5prime:
+            orf_candidates = predict.orf_with_missing_5prime(self.seq, frame)
 
         # 3. Vanilla prediction
         else:
-            predict.orf_vanilla(self.seq, frame)
+            orf_candidates = predict.orf_vanilla(self.seq, frame)
 
+        self.orf_candidates = orf_candidates
+
+        # With ORF candidates, we chose the one with an overlap with
+        # the 5'-most closest relative's anchor HSP. We use some
+        # partial currying to allow this to be done in a list
+        # comphrension. 
+        f = lambda x: cr_ahsps.orf_overlaps_5prime(x, len(self))
+        overlap_candidates = [orf for orf in orf_candidates if f(orf)]
+        self.orfs_overlap = overlap_candidates
+
+        if len(overlap_candidates) == 0:
+            return None
         
-            
-            
-        
+        self.orf = overlap_candidates[0]
+
+        return self.orf

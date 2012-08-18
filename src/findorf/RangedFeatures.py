@@ -1,10 +1,15 @@
 """
-RangesFeatures.py
+RangesFeatures.py contains *lightweight* classes for storing the bare
+minimum amount of information and functional of ranges on sequences to
+predict an ORF. Lightweight range structures are used (i.e. no
+metainformation, no interval tree backend) because we don't have to do
+too many overlap calculations.
 
 """
 
 from collections import defaultdict, Counter
 from copy import deepcopy
+from operator import attrgetter
 
 def nested_attrgetter(attr_1, attr_2):
         """
@@ -13,9 +18,12 @@ def nested_attrgetter(attr_1, attr_2):
 
         This may look strange, but recall attrgetter returns a
         function, so this is essentially currying.
+
+        Note that we use x[1], as this is fed in tuples of dict's
+        (key, values).
         """
         
-        return lambda x: attrgetter(attr_1)(attrgetter(attr_2)(x))
+        return lambda x: attrgetter(attr_1)(attrgetter(attr_2)(x[1]))
 
 class SeqRange(object):
     """
@@ -104,17 +112,20 @@ class SeqRange(object):
         if other.strand != self.strand:
             raise TypeError("SeqRange objects must both have same strand")
 
-        if not allow_unbounded:
-            if None in (self.start, self.end, other.start, other.end):
-                return None
+        if None not in (self.start, self.end, other.start, other.end):
             return other.start <= self.end and self.start <= other.end
+        else:
+            if not allow_unbounded:
+                return None
 
         # unbounded case; for now, let's let only `other` contain
         # unbounded.
         if None in (self.start, self.end):
             raise ValueError("overlaps() only allows None "
-                             "to be in the 'other' SeqRange.")
-        if other.seqlength is None:
+                             "to be only in the 'other' SeqRange;"
+                             "the SeqRange must have specified start/end positiosn.")
+
+        if None in (other.start, other.end) and other.seqlength is None:
             raise ValueError("overlaps() requires 'other' to have seqlength "
                              "if it's missing a start or end position.")
         if other.start is None:
@@ -150,6 +161,14 @@ class HSP(SeqRange):
         self.sbjct_start = sbjct_start
         self.sbjct_end = sbjct_end
         self.frame = frame
+
+    def __repr__(self):
+        info = (self.start, self.end,
+                self.sbjct_start, self.sbjct_end,
+                self.frame, round(self.percent_identity, 4),
+                round(self.e, 4))
+        return "HSP(qs:%s, qe:%s, ss:%s, se:%s, f:%s, pe:%s, e:%s)" % info            
+
 
     def put_on_forward_strand(self, query_length):
         """
@@ -187,8 +206,9 @@ class AnchorHSPs():
         if not consistent_strand:
             raise TypeError("HSPs must have same strand")
 
-        is_reversed = h[0].frame < 0
-
+        is_reversed = hsps[0].frame < 0
+        self.strand = -1 if is_reversed else 1
+        
         hsp_1 = sorted(hsps, key=attrgetter('end'), reverse=True)[0]
         hsp_2 = sorted(hsps, key=attrgetter('start'))[0]
 
@@ -202,17 +222,42 @@ class AnchorHSPs():
             self.most_5prime = hsp_2
             self.most_3prime = hsp_1
 
+    def __repr__(self):
+        return "AnchorHSPs(5': %s; 3': %s)" % (repr(self.most_5prime),
+                                               repr(self.most_3prime))
 
     def __iter__(self):
         for x in [self.most_5prime, self.most_3prime, self.strand]:
             yield x
 
-    def overlaps_5prime(self, other):
+    def orf_overlaps_5prime(self, orf, query_length):
         """
-        Check if another SeqRange overlaps the 5'-end anchor HSP.
+        Does SeqRange `orf` (ALWAYS ON FORWARD STRAND), overlap the 5'
+        anchor hsp? The 5'-anchor HSP is strand-aware: see AnchorHSPs.
+
+        The forward strand is handled only because ORFs only make
+        sense on the forward strand since transcription and
+        translation are 5' to 3'.
+
+        Currently, the 5' anchor HSP is based on the contig reference,
+        which if the majority frame > 0, we can easily use existing
+        overlap function with the `orf` coordinates.
+
+        However, if the `orf` is on the reverse strand (majority frame
+        < 0), we need to translate the 5' anchor HSP to the
+        corresponding 5'-anchor HSP on the forwards strand to compute
+        overlaps. Recall, like Bioconductor's GRanges, to calculate
+        overlaps, we must be on the same strand.
+
+        Also, we allow one-sided overlaps.
+
         """
-        
-        return self.most_5prime.overlaps(other)
+        if self.most_5prime.frame < 0:
+            m5p_ahsp = self.most_5prime.put_on_forward_strand(query_length)
+        else:
+            m5p_ahsp = self.most_5prime
+
+        return m5p_ahsp.overlaps(orf.range)
 
 class RelativeHSPs():
     """
@@ -223,9 +268,13 @@ class RelativeHSPs():
 
     def __init__(self):
         self.relatives = defaultdict(list)
-        self.anchor_hsps = None
+        self.anchor_hsps = dict()
         self._e_value = None
         self._pi_range = None
+
+    def __repr__(self):
+        info = (len(self), repr(self.anchor_hsps))
+        return "RelativeHSPs\n%s relatives\nAnchorHSPs:\n%s" % info
 
     def add_relative_hsp(self, relative, hsp):
         self.relatives[relative].append(hsp)
@@ -242,10 +291,11 @@ class RelativeHSPs():
         """
 
         if e_value is None and pi_range is None:
-            return self.relatives
+            # no filtering required
+            return self
         
         # little funcs for e-value filtering
-        e_thresh = lambda x: x.e <= self._e_value
+        e_thresh = lambda x: x.e <= e_value
 
         filtered_relatives = defaultdict(list)
         for relative, hsps in self.relatives.items():
@@ -277,8 +327,9 @@ class RelativeHSPs():
         """
         return len(self.relatives)
 
+    @property
     def has_relatives(self):
-        return len(self.relative_hsps) > 0
+        return len(self.relatives) > 0
 
     @property
     def _frames(self):
@@ -297,6 +348,24 @@ class RelativeHSPs():
 
         return frame_counts
 
+    @property
+    def inconsistent_strand(self):
+        """
+        In some cases, we may have a majority frameshift, but also
+        because the HSPs are on different strands. This is a very
+        degenerate case, and should be annotated as such.
+        """
+
+        if not self.has_relatives:
+            return None
+
+        inconsistent_strand = Counter()
+        for relative, counts in self._frames.items():
+            # look for differing frame, differing strand
+            strands = [f/abs(f) for f in counts.keys()]
+            inconsistent_strand[len(set(strands)) > 1] += 1
+
+        return inconsistent_strand[True] >= inconsistent_strand[False]
 
     @property
     def majority_frame(self):
@@ -353,11 +422,12 @@ class RelativeHSPs():
     
         return any([len(c.keys()) > 1 for r, c in self._frames.iteritems()])
 
-    @property
-    def anchor_hsps(self):
+    def get_anchor_hsps(self):
         """
         Get (and add to the anchor_hsps attribute) the 5' and 3' HSPs.
         """
+        assert(not self.inconsistent_strand)
+
         for relative, hsps in self.relatives.items(): 
             self.anchor_hsps[relative] = AnchorHSPs(hsps)
 
@@ -380,14 +450,15 @@ class RelativeHSPs():
             # fruther
             reverse = True
 
-        tmp = sorted(self.anchor_hsps.iteritems(),
+        anchor_hsps = self.get_anchor_hsps()
+        tmp = sorted(anchor_hsps.items(),
                      key=nested_attrgetter(key, which),
                      reverse=reverse)
         
         return tmp[0]
 
     
-    def missing_5prime(self, qs_thresh=16, ss_thresh=40):
+    def missing_5prime(self, query_length, qs_thresh=16, ss_thresh=40):
         """
         Return True if the anchor_hsps indicate a missing 5'-end of
         this contig.
@@ -418,13 +489,12 @@ class RelativeHSPs():
         missing_5prime = Counter()
 
         for relative, anchor_hsps in self.anchor_hsps.iteritems():
-            most_5prime, most_3prime = anchor_hsps
-            strand = anchor_hsps.strand
+            most_5prime, most_3prime, strand = anchor_hsps
             
             # note that for reverse strand: the 5'-most is really
             # query_end, but we compare it to the difference between
             # query_end and query_length.
-            query_start = most_5prime.query_start
+            query_start = most_5prime.start
             sbjct_start = most_5prime.sbjct_start
 
             if strand > 0:
@@ -433,41 +503,11 @@ class RelativeHSPs():
             else:
                 # take the query start and subtract it from length to
                 # put everything on forward strand.
-                qs = abs(query_start - self.len) + 1 # blast results are 1-indexed
+                qs = abs(query_start - query_length) + 1 # blast results are 1-indexed
                 m = qs <= qs_thresh and sbjct_start >= ss_thresh
                 missing_5prime[m] += 1
                   
         return missing_5prime[True] >= missing_5prime[False]
-
-
-    def orf_overlaps_closest_relative_5prime_hsp(self, orf, query_length):
-        """
-        Does SeqRange `orf` (ALWAYS ON FORWARD STRAND), overlap the 5'
-        anchor hsp? The 5'-anchor HSP is strand-aware: see AnchorHSPs.
-
-        The forward strand is handled only because ORFs only make
-        sense on the forward strand since transcription and
-        translation are 5' to 3'.
-
-        Currently, the 5' anchor HSP is based on the contig reference,
-        which if the majority frame > 0, we can easily use existing
-        overlap function with the `orf` coordinates.
-
-        However, if the `orf` is on the reverse strand (majority frame
-        < 0), we need to translate the 5' anchor HSP to the
-        corresponding 5'-anchor HSP on the forwards strand to compute
-        overlaps. Recall, like Bioconductor's GRanges, to calculate
-        overlaps, we must be on the same strand.
-
-        Also, we allow one-sided overlaps.
-        """
-
-        m5p_ahsp = self.get_closest_relative_anchor_HSP()
-
-        if m5p_ahsp.frame < 0:
-            m5p_ahsp = m5p_ahsp.put_on_forward_strand(query_length)
-
-        return m5p_ahsp.overlaps(orf.range)
 
 
 class ORF():
@@ -475,19 +515,27 @@ class ORF():
     An ORF or ORF candidate.
     """
     
-    def __init__(self, query_start, query_end, frame,
+    def __init__(self, query_start, query_end, query_length, frame,
                  no_start=None, no_stop=None):
         """
         Note that query_start and query_send are on the forward
         strand.
         """
-        self.start = query_start
-        self.end = query_end
+        self.start = start = query_start
+        self.end = end = query_end
         self.frame = frame
         self.no_start = no_start
         self.no_stop = no_stop
 
-        self.range = SeqRange(start, end, strand=1)
+        if no_start:
+            start = 0
+        if no_stop:
+            end = query_length
+        
+        self.range = SeqRange(start, query_length, strand=1)
+
+    def __repr__(self):
+        return "ORF(%s-%s, %s)" % (self.start, self.end, self.frame)
 
     def get_sequence(self, contig):
         if contig.__class__.__name__ != "Contig":
@@ -500,4 +548,3 @@ class ORF():
     def __len__(self):
         return len(self.range)
 
-    

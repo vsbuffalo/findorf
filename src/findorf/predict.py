@@ -10,10 +10,6 @@ can be applied to infer ORFs and annotation.
 
 from utilities import get_all_orfs, get_codons
 
-## Biological constants TODO get from BioPython
-STOP_CODONS = set(["TAG", "TGA", "TAA"])
-START_CODONS = set(["ATG"])
-
 def orf_with_frameshift(seq, closest_relative_anchors,
                         missing_5prime, key='e'):
     """
@@ -29,7 +25,7 @@ def orf_with_frameshift(seq, closest_relative_anchors,
     frame_5prime_hsp = closest_relative_anchors.most_5prime.frame
 
     # missing 5'-end so we're assuming we're already reading.
-    all_orfs = get_all_ORFs(seq, frame_5prime_hsp, len(seq), missing_5prime)
+    all_orfs = get_all_orfs(seq, frame_5prime_hsp, len(seq), missing_5prime)
     
     return all_orfs
     
@@ -48,7 +44,7 @@ def orf_with_missing_5prime(seq, frame):
     
     """
 
-    all_orfs = get_all_ORFs(seq, frame, len(seq), in_reading_frame=True)
+    all_orfs = get_all_orfs(seq, frame, len(seq), in_reading_frame=True)
 
     return all_orfs
 
@@ -79,13 +75,12 @@ def orf_vanilla(seq, frame):
     If `assuming_missing_start` is True, we start pretending we are in
     an ORF, reading until the first stop, and including this as an
     ORF. This is False, and should not be set to True until (if)
-    `get_all_ORFs` is changed so that it restarts the loop when the
+    `get_all_orfs` is changed so that it restarts the loop when the
     first ORF with a stop codon but no start is found. This is tricky;
     a 5'-UTR could have a stop codon, so we would end up with
     overlapping cases. For now, we take the conservative approach.
 
     Note that the missing 5' logic will also catch these cases.
     """
-    all_orfs = get_all_ORFs(seq, frame, len(seq),
-                            in_reading_frame=assuming_missing_start)
+    all_orfs = get_all_orfs(seq, frame, len(seq), in_reading_frame=False)
     return all_orfs

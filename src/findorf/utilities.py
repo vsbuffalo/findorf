@@ -5,6 +5,11 @@ sequences in frame, etc.
 """
 
 from Bio.Seq import Seq
+from RangedFeatures import ORF
+
+## Biological constants TODO get from BioPython
+STOP_CODONS = set(["TAG", "TGA", "TAA"])
+START_CODONS = set(["ATG"])
 
 def get_codons(seq, frame):
     """
@@ -27,7 +32,7 @@ def get_codons(seq, frame):
     return [(c, po, pfq) for c, po, pfq in tmp if len(c) == 3]
 
 
-def get_all_orfs(seq, frame, in_reading_frame=False):
+def get_all_orfs(seq, frame, query_length, in_reading_frame=False):
     """
     Generic ORF finder; it returns a list of all ORFs as they are
     found, given codons (a list if tuples in the form (codon,
@@ -51,7 +56,7 @@ def get_all_orfs(seq, frame, in_reading_frame=False):
             # a full reading frame, unless we haven't hit any stop
             # yet, then we're in the possible ORF from the start of
             # the query to the end.
-            all_orfs.append(ORF(query_start_pos, query_pos,
+            all_orfs.append(ORF(query_start_pos, query_pos, query_length,
                                 frame, no_start=query_start_pos is None))
             
             in_reading_frame = False
@@ -60,7 +65,7 @@ def get_all_orfs(seq, frame, in_reading_frame=False):
             
         # add an partial ORFs, and mark as having no stop codon
         if in_reading_frame:
-            all_orfs.append(ORF(query_start_pos, query_pos,
+            all_orfs.append(ORF(query_start_pos, query_pos, query_length,
                                 frame, no_start=query_start_pos is None,
                                 no_stop=True))
             

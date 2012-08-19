@@ -158,8 +158,7 @@ number of relatives: $num_relatives
 
         3. Vanilla
         """
-        print "predicting ORF for contig", self.id
-        
+
         if not self.has_relatives:
             return None
 
@@ -176,8 +175,6 @@ number of relatives: $num_relatives
 
         if not rel_hsps.has_relatives:
             return None
-
-        print self.id, "has relatives, continuing..."
 
         # get the frame and closest relative anchor HSPs and whether
         # the HSPs lie on different strands (really degenerate case).

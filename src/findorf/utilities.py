@@ -6,6 +6,7 @@ sequences in frame, etc.
 
 from Bio.Seq import Seq
 from RangedFeatures import ORF
+from collections import Counter
 
 ## Biological constants TODO get from BioPython
 STOP_CODONS = set(["TAG", "TGA", "TAA"])
@@ -63,11 +64,33 @@ def get_all_orfs(seq, frame, query_length, in_reading_frame=False):
             orf_start_pos = None
             query_start_pos = None
             
-        # add an partial ORFs, and mark as having no stop codon
-        if in_reading_frame:
-            all_orfs.append(ORF(query_start_pos, query_pos, query_length,
-                                frame, no_start=query_start_pos is None,
-                                no_stop=True))
+    # add an partial ORFs, and mark as having no stop codon
+    if in_reading_frame:
+        all_orfs.append(ORF(query_start_pos, query_pos, query_length,
+                            frame, no_start=query_start_pos is None,
+                            no_stop=True))
             
     return all_orfs
 
+def summarize_contigs(contigs):
+    """
+    Summarize annotation.
+    """
+
+    terms = ['majority_frameshift', 'missing_5prime',
+               'inconsistent_strand', 'has_orf', 'has_relatives',
+             'num_relatives', 'num_orf_candidates', 'closest_relative']
+
+    annotation_summary = dict([(t, Counter()) for t in terms])
+    
+    for contig in contigs.values():
+        all_anno = contig.get_annotation()
+        for key, value in all_anno.items():
+            if value is None:
+                value = "None"
+            annotation_summary[key][value] += 1
+
+    return annotation_summary
+
+        
+        

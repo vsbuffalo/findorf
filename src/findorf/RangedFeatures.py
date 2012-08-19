@@ -425,10 +425,18 @@ class RelativeHSPs():
     def get_anchor_hsps(self):
         """
         Get (and add to the anchor_hsps attribute) the 5' and 3' HSPs.
+
+        We ignore cases in which there is a relative with HSPs on
+        different strands (but allow for differing frame)
         """
+        # not majority inconsistent strand, individual relatives could
+        # still have HSPs on differing strands.
         assert(not self.inconsistent_strand)
 
-        for relative, hsps in self.relatives.items(): 
+        for relative, hsps in self.relatives.items():
+            strands = [h.frame/abs(h.frame) for h in hsps]
+            if len(set(strands)) > 1:
+                continue
             self.anchor_hsps[relative] = AnchorHSPs(hsps)
 
         return self.anchor_hsps

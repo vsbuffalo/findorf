@@ -582,13 +582,15 @@ class ORF():
     def __repr__(self):
         return "ORF(%s-%s, %s)" % (self.start, self.end, self.frame)
 
-    def get_sequence(self, contig):
+    def get_sequence(self, contig, include_stop=True):
         if contig.__class__.__name__ != "Contig":
             raise TypeError("'contig' must be a Contig object")
-
+        end = self.end
+        if include_stop:
+            end = end + 3
         if self.frame < 0:
-            return contig.seq.reverse_complement()[self.start:self.end]
-        return contig.seq[self.start:self.end]
+            return contig.seq.reverse_complement()[self.start:end]
+        return contig.seq[self.start:end]
 
     def __len__(self):
         return len(self.range)

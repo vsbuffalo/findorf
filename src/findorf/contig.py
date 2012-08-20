@@ -25,6 +25,7 @@ try:
     from Bio.Blast import NCBIXML
     from Bio import SeqIO
     from Bio.Seq import Seq
+    from Bio.SeqRecord import SeqRecord
 except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
 
@@ -65,6 +66,8 @@ class Contig():
         self.relative_hsps = RelativeHSPs()
 
         # Annotation attributes
+        self.cr_ahsps = None
+        self.filtered_relative_hsps = None
         self.orf = None
         self.missing_start = None
         self.missing_stop = None
@@ -222,8 +225,42 @@ class Contig():
         out = self.gff_dict()
         out["group"] = group
         return out
-    
-    
+
+    @property
+    def protein(self):
+        """
+        Return a protein sequence.
+        """
+        if self.orf is not None:
+            seq = self.orf.get_sequence(self)
+            return SeqRecord(seq=seq.translate(), id=self.id)
+        return None
+
+    @property
+    def seq(self):
+        """
+        Return the nucleotide sequence record
+        """
+        if self.orf is not None:
+            seq = self.orf.get_sequence(self)
+            return SeqRecord(seq=seq, id=self.id)
+        return None
+
+    @property
+    def internal_stop(self):
+        """
+        """
+        if self.orf is None:
+            return None
+        for relative, ahsps in self.relative_hsps.anchor_hsps.items():
+            if orf.frame < 0:
+                if ahsps.most_3prime.start < orf.start:
+                    return True
+            else:
+                if ahsps.most_3prime.end > orf.end:
+                    return True
+        return False
+
     def predict_orf(self, e_value=None, pi_range=None, qs_thresh=16, ss_thresh=40):
         """
         Predict an ORF, given some parameters.
@@ -295,7 +332,6 @@ class Contig():
         # comphrension. 
         f = lambda x: cr_ahsps.orf_overlaps_5prime(x, len(self))
         overlap_candidates = [orf for orf in orf_candidates if f(orf)]
-        self.orfs_overlap = overlap_candidates
 
         if len(overlap_candidates) == 0:
             self.add_annotation('hsp_orf_overlap', False)
@@ -309,9 +345,10 @@ class Contig():
             overlap_candidates = sorted(overlap_candidates,
                                         key=attrgetter('start'), reverse=True)
         self.orf = overlap_candidates[0]
+        self.orfs_overlap = overlap_candidates
 
         # Annotate missing start/stop for ORF
         self.add_annotation('missing_start', self.orf.no_start)
         self.add_annotation('missing_stop', self.orf.no_stop)
-
+        self.add_annotation('internal_stop', self.internal_stop)
         return self.orf

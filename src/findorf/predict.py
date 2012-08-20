@@ -49,23 +49,6 @@ def orf_with_missing_5prime(seq, frame):
     return all_orfs
 
 
-def annotate_orf(anchor_hsps, orf):
-    """
-    If we have an ORF (from ORF class), annotate some
-    obvious characteristiself about it.
-    """
-    annotation = dict()
-
-    annotation['missing_stop'] = orf.no_stop
-    annotation['missing_start'] = orf.no_start
-    annotation['full_length'] = not any((orf.no_start, orf.no_stop))
-
-    cisc = contains_internal_stop_codon(anchor_hsps, orf)
-    annotation['contains_stop'] = cisc
-
-    return annotation
-
-
 def orf_vanilla(seq, frame):
     """
     The vanilla case: we have a sequence and a frame, full 5'-end, and

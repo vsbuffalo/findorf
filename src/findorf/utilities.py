@@ -58,7 +58,8 @@ def get_all_orfs(seq, frame, query_length, in_reading_frame=False):
             # yet, then we're in the possible ORF from the start of
             # the query to the end.
             all_orfs.append(ORF(query_start_pos, query_pos, query_length,
-                                frame, no_start=query_start_pos is None))
+                                frame, no_start=query_start_pos is None,
+                                no_stop=False))
             
             in_reading_frame = False
             orf_start_pos = None
@@ -79,7 +80,7 @@ def summarize_contigs(contigs):
 
     terms = ['majority_frameshift', 'missing_5prime', 'hsp_orf_overlap',
              'inconsistent_strand', 'has_orf', 'has_relatives',
-             'missing_start', 'missing_stop',
+             'missing_start', 'missing_stop', 'internal_stop',
              'num_relatives', 'num_orf_candidates', 'closest_relative']
 
     annotation_summary = dict([(t, Counter()) for t in terms])
@@ -93,3 +94,19 @@ def summarize_contigs(contigs):
             annotation_summary[key][value] += 1
 
     return annotation_summary
+
+
+def put_seq_in_frame(seq, frame):
+    """
+    Take a sequence (of Bio.Seq class) and transform it to into the
+    correct frame.
+    """
+    if seq.__class__.__name__ != "Seq":
+        seq = Seq(seq)
+    if frame < 0:
+        seq = seq.reverse_complement()
+        frame = -1*frame
+
+    if not frame in range(1, 4):
+        raise Exception, "improper frame: frame must be in [1, 3]"
+    return seq[(frame-1):]

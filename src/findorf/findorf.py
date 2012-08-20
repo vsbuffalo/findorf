@@ -95,10 +95,30 @@ def predict_orf(args):
 
 
     print "total", counter['total']
+
+    if args.protein is not None:
+        sys.stderr.write("[predict] writing protein sequences...")
+        proteins = [x.protein for x in all_contigs.values() if x.protein is not None]
+        SeqIO.write(proteins, args.protein, "fasta")
+        args.protein.close()
+        sys.stderr.write("\tdone.\n")
+
+    if args.fasta is not None:
+        sys.stderr.write("[predict] writing nucleotide sequences...")
+        seqs = [x.seq for x in all_contigs.values() if x.seq is not None]
+        SeqIO.write(seqs, args.fasta, "fasta")
+        args.fasta.close()
+        sys.stderr.write("\tdone.\n")
     
+    if args.gtf is not None:
+        sys.stderr.write("[predict] writing GTF...")
+        dw = csv.DictWriter(args.gtf, GTF_FIELDS, delimiter="\t")
+        for c in all_contig.values():
+            dw.writerow(c.gtf_dict())
+        sys.stderr.write("\tdone.\n")
+        
     if args.interactive:
         go_interactive(all_contigs, None)
-
     # for debugging with python -i
     return all_contigs
         

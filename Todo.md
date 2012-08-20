@@ -11,6 +11,8 @@
 - Add qs_start, etc missing 5prime params as args
 
 ## Cases to Check
+
+ - k56_contig_22298 appears to be too short.
  - k36_contig_11881 - premature stop
  - k41_contig_27125 - tons of HSPs
 

@@ -2,18 +2,13 @@
 
 ## Things to Do
 
-1. Is there a stop codon between the 5'-most HSP and the end of the
-sequence?
+- Study codon bias in real vs fake ORFs
 
-2. Use the first frame of a frameshifted contig to predict ORF.
+- Check that orf_overlaps_5prime is working correctly.
 
-3. If there's a stop codon in in from the contig start to the query start, we ignore it.
+- If there's a stop codon in in from the contig start to the query start, we ignore it
 
-4. Very important: check that some of the query length adjustments
-aren't using query length (in bp) when we should be using protein
-length in amino acids.
-
-5. Add qs_start, etc missing 5prime params as args
+- Add qs_start, etc missing 5prime params as args
 
 ## Cases to Check
  - k36_contig_11881 - premature stop

@@ -77,20 +77,19 @@ def summarize_contigs(contigs):
     Summarize annotation.
     """
 
-    terms = ['majority_frameshift', 'missing_5prime',
-               'inconsistent_strand', 'has_orf', 'has_relatives',
+    terms = ['majority_frameshift', 'missing_5prime', 'hsp_orf_overlap',
+             'inconsistent_strand', 'has_orf', 'has_relatives',
+             'missing_start', 'missing_stop',
              'num_relatives', 'num_orf_candidates', 'closest_relative']
 
     annotation_summary = dict([(t, Counter()) for t in terms])
+
+    if type(contigs) is dict:
+        contigs = contigs.values()
     
-    for contig in contigs.values():
+    for contig in contigs:
         all_anno = contig.get_annotation()
         for key, value in all_anno.items():
-            if value is None:
-                value = "None"
             annotation_summary[key][value] += 1
 
     return annotation_summary
-
-        
-        

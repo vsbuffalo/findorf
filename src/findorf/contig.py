@@ -28,8 +28,10 @@ try:
 except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
 
-from RangedFeatures import HSP, AnchorHSPs, RelativeHSPs
+from RangedFeatures import HSP, AnchorHSPs, RelativeHSPs, indent
 import predict
+from templates import contig_str
+
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
               "end", "score", "strand", "frame", "group")        
@@ -64,19 +66,46 @@ class Contig():
 
         # Annotation attributes
         self.orf = None
+        self.missing_start = None
+        self.missing_stop = None
         self.orf_candidates = list()
         self.annotation = dict()
 
     def __repr__(self):
-        info = dict(id=self.id, len=len(self),
-                    num_relatives=len(self.relative_hsps))
-        msg = Template("""Contig instance for ID: $id
-length: $len
-number of relatives: $num_relatives
-""").substitute(info)
+        """
+        A string summary of the Contig object.
+        """
+        out = '-' * 80 + "\n"
+        info = dict(id=self.id, length=len(self),
+                    num_relatives=len(self.relative_hsps),
+                    majority_frame=self.relative_hsps.majority_frame,
+                    majority_frameshift=self.relative_hsps.majority_frameshift,
+                    inconsistent_strand=self.relative_hsps.inconsistent_strand,
+                    relative=self.get_annotation('closest_relative'),
+                    missing_5prime=self.relative_hsps.missing_5prime(len(self)),
+                    overlap=self.get_annotation('hsp_orf_overlap'),
+                    orf=self.orf)
+        
+        if hasattr(self, 'cr_ahsps'):
+            info.update(dict(anchor_hsps=self.cr_ahsps))
+        else:
+            info.update(dict(anchor_hsps=None))
 
-        return msg
+        if self.orf is not None:
+            tmp = dict(missing_start=self.orf.no_start,
+                       missing_stop=self.orf.no_stop,
+                       seq=self.orf.get_sequence(self))
+        else:
+            tmp = dict(missing_start=None,
+                       missing_stop=None,
+                       seq=None)
+            
+        info.update(tmp)
+        out += Template(contig_str).substitute(info)
+        return out
 
+    def __str__(self):
+        self.__repr__()
 
     def __len__(self):
         """
@@ -129,28 +158,76 @@ number of relatives: $num_relatives
     def get_annotation(self, key=None):
         """
         Get annotation from the annotation dict, but return None if
-        there is something is not defined.
+        there is something is not defined. These are updated first,
+        before retrieving.
         """
-        if key is not None:
-            return self.annotation.get(key, None)
-        
         current_anno = self.annotation.items()
         attribute_anno = [('has_relatives', self.has_relatives),
                           ('num_relatives', len(self.relative_hsps)),
                            ('has_orf', self.orf is not None),
                            ('num_orf_candidates', len(self.orf_candidates))]
 
-        return dict(current_anno + attribute_anno)
+        self.annotation =  dict(current_anno + attribute_anno)
+        
+        if key is not None:
+            return self.annotation.get(key, None)
+
+        return self.annotation
         
 
     @property
     def has_relatives(self):
         return len(self.relative_hsps) > 0
 
+    def gff_dict(self):
+        """
+        Return a dictionary of some key attribute's values,
+        corresponding to a GFF file's columns.
+        
+        Note that GFFs are 1-indexed, so we add one to positions.
+        """
+        out = dict()
+        out["seqname"] = self.id
+        out["source"] = "findorf"
+        out["feature"] = "predicted_orf"
+        # we increment the start because GTF is 1-indexed, but not for
+        # the end, since we want the ORF to (but not including) the
+        # stop codon.
+        out["start"] = self.orf.start + 1 if self.orf is not None else '.'
+        out["end"] = self.orf.end if self.orf is not None else '.'
+        out["score"] = "."
+        
+        if self.majority_frame is not None:
+            out["strand"] = self.majority_frame/abs(self.majority_frame)
+        else:
+            out["strand"] = "."
+            
+        if self.majority_frame is not None:
+            # GFF uses frames in [0, 2]
+            out["frame"] = abs(self.majority_frame) - 1
+        else:
+            out["frame"] = "."
+            out["group"] = "."
+        return out
+        
+    def gtf_dict(self):
+        """
+        Return a dictionary corresponding to the columns of a GTF
+        file.
+        """
+        anno = self.get_annotation()
+        # a GTF's file's "group" column contains a merged set of
+        # attributes, which in ContigSequence's case are those below
+        group = "; ".join(["%s %s" % (k, v) for k, v in anno.items()])
+        out = self.gff_dict()
+        out["group"] = group
+        return out
+    
+    
     def predict_orf(self, e_value=None, pi_range=None, qs_thresh=16, ss_thresh=40):
         """
         Predict an ORF, given some parameters.
-
+        
         1. Frameshift?
           1.1. Missing 5' also?
 
@@ -221,8 +298,20 @@ number of relatives: $num_relatives
         self.orfs_overlap = overlap_candidates
 
         if len(overlap_candidates) == 0:
+            self.add_annotation('hsp_orf_overlap', False)
             return None
-        
+        else:
+            self.add_annotation('hsp_orf_overlap', True)
+
+        # we sort by overlap query start. If reverse strand, we
+        # reverse the order sorted order.
+        if frame < 0:
+            overlap_candidates = sorted(overlap_candidates,
+                                        key=attrgetter('start'), reverse=True)
         self.orf = overlap_candidates[0]
+
+        # Annotate missing start/stop for ORF
+        self.add_annotation('missing_start', self.orf.no_start)
+        self.add_annotation('missing_stop', self.orf.no_stop)
 
         return self.orf

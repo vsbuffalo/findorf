@@ -10,6 +10,11 @@ too many overlap calculations.
 from collections import defaultdict, Counter
 from copy import deepcopy
 from operator import attrgetter
+from string import Template
+        
+def indent(string, level=2, char=' '):
+    s = string.split("\n")
+    return char*level + '\n'.join([char*level + line for line in s])
 
 def nested_attrgetter(attr_1, attr_2):
         """
@@ -167,8 +172,20 @@ class HSP(SeqRange):
                 self.sbjct_start, self.sbjct_end,
                 self.frame, round(self.percent_identity, 4),
                 round(self.e, 4))
-        return "HSP(qs:%s, qe:%s, ss:%s, se:%s, f:%s, pe:%s, e:%s)" % info            
+        return "HSP(qs:%s, qe:%s, ss:%s, se:%s, f:%s, pe:%s, e:%s)" % info
 
+    def __str__(self):
+        out = """
+query start/end: $start/$end
+subject start/end: $sbjct_start/$sbjct_end
+frame: $frame
+e-value: $e
+identities: $identities
+length: $length
+percent identity: $percent_identity
+"""
+        return Template(out).substitute(self.__dict__)        
+        
 
     def put_on_forward_strand(self, query_length):
         """
@@ -225,6 +242,9 @@ class AnchorHSPs():
     def __repr__(self):
         return "AnchorHSPs(5': %s; 3': %s)" % (repr(self.most_5prime),
                                                repr(self.most_3prime))
+    def __str__(self):
+        hsps = (indent(str(self.most_5prime)), indent(str(self.most_3prime)))
+        return "most 5':\n%s\nmost 3':\n%s\n" % hsps
 
     def __iter__(self):
         for x in [self.most_5prime, self.most_3prime, self.strand]:
@@ -272,8 +292,25 @@ class RelativeHSPs():
         self._e_value = None
         self._pi_range = None
 
+    def _pretty_anchor_hsps(self, ahsps=None):
+        """
+        Return a formatted string of relatives and their anchor
+        HSPs. Expects a list of (relative, AnchorHSPs) tuple, or if
+        None, will print all anchor HSPs.
+        """
+        if ahsps is None:
+            self.get_anchor_hsps()
+            ahsps = self.anchor_hsps.items()
+        out = ""
+        for relative, hsps in ahsps:
+            out += "\nrelative: %s" % relative
+            out += indent(str(hsps))
+        return out
+
     def __repr__(self):
-        info = (len(self), repr(self.anchor_hsps))
+        self.get_anchor_hsps()
+        closest_rel, cr_ahsps = self.closest_relative_anchor_hsps()
+        info = (len(self), self._pretty_anchor_hsps([(closest_rel, cr_ahsps)]))
         return "RelativeHSPs\n%s relatives\nAnchorHSPs:\n%s" % info
 
     def add_relative_hsp(self, relative, hsp):
@@ -549,7 +586,7 @@ class ORF():
         if contig.__class__.__name__ != "Contig":
             raise TypeError("'contig' must be a Contig object")
 
-        if frame < 0:
+        if self.frame < 0:
             return contig.seq.reverse_complement()[self.start:self.end]
         return contig.seq[self.start:self.end]
 

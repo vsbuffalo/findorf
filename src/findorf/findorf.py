@@ -87,8 +87,9 @@ def predict_orf(args):
         # Predict ORF and update contig annotation
         if args.verbose:
             if counter['total'] % 1000 == 0:
-               sys.stderr.write("%d out of %d contigs processed\r"
+               sys.stderr.write("\t%d out of %d contigs processed\r"
                                 % (counter['total'], len(all_contigs)))
+               sys.stderr.flush()
         orf = contig.predict_orf(args.e_value, pi_range_args)
         counter['total'] += 1
 

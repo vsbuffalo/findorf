@@ -579,6 +579,26 @@ class ORF():
         
         self.range = SeqRange(start, query_length, strand=1)
 
+    def abs_start(self):
+        """
+        abs_start returns the start position without None.
+        """
+        if self.start is None:
+            if not self.no_start:
+                raise ValueError("inconsistent ORF: no_start and start don't agree")
+            return 0
+        else:
+            return self.start
+
+    def abs_end(self, query_length):
+        if self.end is None:
+            if not self.no_stop:
+                raise ValueError("inconsistent ORF: no_stop and end don't agree")
+            return query_length
+        else:
+            return self.end
+
+        
     def __repr__(self):
         return "ORF(%s-%s, %s)" % (self.start, self.end, self.frame)
 

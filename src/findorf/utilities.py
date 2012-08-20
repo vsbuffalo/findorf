@@ -33,7 +33,8 @@ def get_codons(seq, frame):
     return [(c, po, pfq) for c, po, pfq in tmp if len(c) == 3]
 
 
-def get_all_orfs(seq, frame, query_length, in_reading_frame=False):
+def get_all_orfs(seq, frame, query_length,
+                 in_reading_frame=False, add_partial=False):
     """
     Generic ORF finder; it returns a list of all ORFs as they are
     found, given codons (a list if tuples in the form (codon,
@@ -70,7 +71,14 @@ def get_all_orfs(seq, frame, query_length, in_reading_frame=False):
         all_orfs.append(ORF(query_start_pos, query_pos, query_length,
                             frame, no_start=query_start_pos is None,
                             no_stop=True))
-            
+    if add_partial:
+        for codon, orf_pos, query_pos in codons:
+            if codon in STOP_CODONS:
+                all_orfs.insert(0, ORF(None, query_pos, query_length,
+                                       frame, no_start=True,
+                                       no_stop=True))
+                break
+
     return all_orfs
 
 def summarize_contigs(contigs):

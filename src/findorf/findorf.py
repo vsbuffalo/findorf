@@ -105,7 +105,7 @@ def predict_orf(args):
 
     if args.fasta is not None:
         sys.stderr.write("[predict] writing nucleotide sequences...")
-        seqs = [x.seq for x in all_contigs.values() if x.seq is not None]
+        seqs = [x.orf_seq for x in all_contigs.values() if x.orf_seq is not None]
         SeqIO.write(seqs, args.fasta, "fasta")
         args.fasta.close()
         sys.stderr.write("\tdone.\n")
@@ -113,7 +113,7 @@ def predict_orf(args):
     if args.gtf is not None:
         sys.stderr.write("[predict] writing GTF...")
         dw = csv.DictWriter(args.gtf, GTF_FIELDS, delimiter="\t")
-        for c in all_contig.values():
+        for c in all_contigs.values():
             dw.writerow(c.gtf_dict())
         sys.stderr.write("\tdone.\n")
         

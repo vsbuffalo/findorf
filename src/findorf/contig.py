@@ -196,18 +196,19 @@ class Contig():
         # we increment the start because GTF is 1-indexed, but not for
         # the end, since we want the ORF to (but not including) the
         # stop codon.
-        out["start"] = self.orf.start + 1 if self.orf is not None else '.'
-        out["end"] = self.orf.end if self.orf is not None else '.'
+        out["start"] = self.orf.abs_start() if self.orf is not None else '.'
+        out["end"] = self.orf.abs_end(len(self)) if self.orf is not None else '.'
         out["score"] = "."
-        
-        if self.majority_frame is not None:
-            out["strand"] = self.majority_frame/abs(self.majority_frame)
+
+        mf = self.relative_hsps.majority_frame
+        if mf is not None:
+            out["strand"] = mf/abs(mf)
         else:
             out["strand"] = "."
             
-        if self.majority_frame is not None:
+        if mf is not None:
             # GFF uses frames in [0, 2]
-            out["frame"] = abs(self.majority_frame) - 1
+            out["frame"] = abs(mf) - 1
         else:
             out["frame"] = "."
             out["group"] = "."
@@ -237,7 +238,7 @@ class Contig():
         return None
 
     @property
-    def seq(self):
+    def orf_seq(self):
         """
         Return the nucleotide sequence record
         """
@@ -245,21 +246,6 @@ class Contig():
             seq = self.orf.get_sequence(self)
             return SeqRecord(seq=seq, id=self.id)
         return None
-
-    @property
-    def internal_stop(self):
-        """
-        """
-        if self.orf is None:
-            return None
-        for relative, ahsps in self.relative_hsps.anchor_hsps.items():
-            if orf.frame < 0:
-                if ahsps.most_3prime.start < orf.start:
-                    return True
-            else:
-                if ahsps.most_3prime.end > orf.end:
-                    return True
-        return False
 
     def predict_orf(self, e_value=None, pi_range=None, qs_thresh=16, ss_thresh=40):
         """
@@ -340,15 +326,16 @@ class Contig():
             self.add_annotation('hsp_orf_overlap', True)
 
         # we sort by overlap query start. If reverse strand, we
-        # reverse the order sorted order.
+        # reverse the order sorted order (since they were added)
         if frame < 0:
             overlap_candidates = sorted(overlap_candidates,
-                                        key=attrgetter('start'), reverse=True)
+                                        key=lambda x: x.abs_start(), reverse=True)
+
         self.orf = overlap_candidates[0]
         self.orfs_overlap = overlap_candidates
 
         # Annotate missing start/stop for ORF
         self.add_annotation('missing_start', self.orf.no_start)
         self.add_annotation('missing_stop', self.orf.no_stop)
-        self.add_annotation('internal_stop', self.internal_stop)
+        self.add_annotation('internal_stop', len(overlap_candidates) > 1)
         return self.orf

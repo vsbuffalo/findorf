@@ -116,6 +116,12 @@ def predict_orf(args):
         for c in all_contigs.values():
             dw.writerow(c.gtf_dict())
         sys.stderr.write("\tdone.\n")
+
+    if args.dense is not None:
+        sys.stderr.write("[predict] writing dense...")
+        for c in all_contigs.values():
+            args.dense.write(repr(c))
+        sys.stderr.write("\tdone.\n")
         
     if args.interactive:
         go_interactive(all_contigs, None)
@@ -242,9 +248,9 @@ def main():
     parser_predict.add_argument('--dense', type=argparse.FileType('w'),
                                 default=None,
                                 help="filename of the dense output file")
-    parser_predict.add_argument('--full-length', action="store_true",
-                                help=("the FASTA reference that corresponds "
-                                "to BLASTX queries"))
+    # parser_predict.add_argument('--full-length', action="store_true",
+    #                             help="output file of full length ORFs")
+    #                             "to BLASTX queries"))
     parser_predict.add_argument('-e', '--e-value', type=float,
                                 default=10e-3,
                                 help=("e-value threshold (relative hit "

@@ -327,9 +327,9 @@ class Contig():
 
         # we sort by overlap query start. If reverse strand, we
         # reverse the order sorted order (since they were added)
-        if frame < 0:
-            overlap_candidates = sorted(overlap_candidates,
-                                        key=lambda x: x.abs_start(), reverse=True)
+        # if frame < 0:
+        #     overlap_candidates = sorted(overlap_candidates,
+        #                                 key=lambda x: x.abs_start(), reverse=True)
 
         self.orf = overlap_candidates[0]
         self.orfs_overlap = overlap_candidates

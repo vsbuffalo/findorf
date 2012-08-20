@@ -6,7 +6,7 @@ metainformation, no interval tree backend) because we don't have to do
 too many overlap calculations.
 
 """
-
+import pdb
 from collections import defaultdict, Counter
 from copy import deepcopy
 from operator import attrgetter
@@ -273,10 +273,11 @@ class AnchorHSPs():
 
         """
         if self.most_5prime.frame < 0:
+            # pdb.set_trace()
             m5p_ahsp = self.most_5prime.put_on_forward_strand(query_length)
         else:
             m5p_ahsp = self.most_5prime
-
+            
         return m5p_ahsp.overlaps(orf.range)
 
 class RelativeHSPs():
@@ -344,7 +345,7 @@ class RelativeHSPs():
             if pi_range is not None:
                 rng = pi_range[relative]
                 in_range = (lambda x:
-                            rng is None or rng[0] <= x.percent_identity <= rng[1])
+                            rng is None or rng[0] <= 100*x.percent_identity <= rng[1])
                 filters.append((pi_range, in_range))
 
             for h in hsps:
@@ -577,7 +578,7 @@ class ORF():
         if no_stop:
             end = query_length
         
-        self.range = SeqRange(start, query_length, strand=1)
+        self.range = SeqRange(start, end, strand=1)
 
     def abs_start(self):
         """

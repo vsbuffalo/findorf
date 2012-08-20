@@ -14,7 +14,6 @@ majority frameshift: $majority_frameshift
 relative: $relative
 anchors:
 $anchor_hsps
-
 # ORF Integrity
 missing start codon: $missing_start
 missing stop codon: $missing_stop

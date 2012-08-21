@@ -32,7 +32,7 @@ except ImportError, e:
 from RangedFeatures import HSP, AnchorHSPs, RelativeHSPs, indent
 import predict
 from templates import contig_str
-
+from utilities import put_seq_in_frame
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
               "end", "score", "strand", "frame", "group")        
@@ -196,8 +196,8 @@ class Contig():
         # we increment the start because GTF is 1-indexed, but not for
         # the end, since we want the ORF to (but not including) the
         # stop codon.
-        out["start"] = self.orf.abs_start() if self.orf is not None else '.'
-        out["end"] = self.orf.abs_end(len(self)) if self.orf is not None else '.'
+        out["start"] = self.orf.abs_start() + 1 if self.orf is not None else '.'
+        out["end"] = self.orf.abs_end(len(self)) + 1 if self.orf is not None else '.'
         out["score"] = "."
 
         mf = self.relative_hsps.majority_frame
@@ -222,7 +222,7 @@ class Contig():
         anno = self.get_annotation()
         # a GTF's file's "group" column contains a merged set of
         # attributes, which in ContigSequence's case are those below
-        group = "; ".join(["%s %s" % (k, v) for k, v in anno.items()])
+        group = ";".join(["%s %s" % (k, v) for k, v in anno.items()])
         out = self.gff_dict()
         out["group"] = group
         return out
@@ -234,6 +234,7 @@ class Contig():
         """
         if self.orf is not None:
             seq = self.orf.get_sequence(self)
+            frame = self.relative_hsps.majority_frame
             return SeqRecord(seq=seq.translate(), id=self.id)
         return None
 
@@ -337,5 +338,6 @@ class Contig():
         # Annotate missing start/stop for ORF
         self.add_annotation('missing_start', self.orf.no_start)
         self.add_annotation('missing_stop', self.orf.no_stop)
+        self.add_annotation('full_length', all((not self.orf.no_start, not self.orf.no_start)))
         self.add_annotation('internal_stop', len(overlap_candidates) > 1)
         return self.orf

@@ -584,34 +584,37 @@ class ORF():
         """
         abs_start returns the start position without None.
         """
-        if self.start is None:
-            if not self.no_start:
-                raise ValueError("inconsistent ORF: no_start and start don't agree")
+        if self.no_start:
             return 0
         else:
             return self.start
 
     def abs_end(self, query_length):
-        if self.end is None:
-            if not self.no_stop:
-                raise ValueError("inconsistent ORF: no_stop and end don't agree")
+        if self.no_stop:
             return query_length
         else:
-            return self.end
+            return self.end - 1 # the base before the stop codon
 
         
     def __repr__(self):
         return "ORF(%s-%s, %s)" % (self.start, self.end, self.frame)
 
     def get_sequence(self, contig, include_stop=True):
+        """
+        Get ORF sequence, handling case of no start (begins with
+        frame) and adding on final stop codon nucleotides.
+        """
         if contig.__class__.__name__ != "Contig":
             raise TypeError("'contig' must be a Contig object")
         end = self.end
         if include_stop:
             end = end + 3
+        start = self.start
+        if self.no_start:
+            start = abs(self.frame) - 1
         if self.frame < 0:
-            return contig.seq.reverse_complement()[self.start:end]
-        return contig.seq[self.start:end]
+            return contig.seq.reverse_complement()[start:end]
+        return contig.seq[start:end]
 
     def __len__(self):
         return len(self.range)

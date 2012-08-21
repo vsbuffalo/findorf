@@ -112,15 +112,19 @@ def predict_orf(args):
     
     if args.gtf is not None:
         sys.stderr.write("[predict] writing GTF...")
-        dw = csv.DictWriter(args.gtf, GTF_FIELDS, delimiter="\t")
+        gtffmt = '\t'.join(["$" + g for g in GTF_FIELDS]) + '\n'
+
         for c in all_contigs.values():
-            dw.writerow(c.gtf_dict())
+            args.gtf.write(Template(gtffmt).substitute(c.gtf_dict()))
+        args.gtf.write("\n")
+        args.gtf.close()
         sys.stderr.write("\tdone.\n")
 
     if args.dense is not None:
         sys.stderr.write("[predict] writing dense...")
         for c in all_contigs.values():
             args.dense.write(repr(c))
+        args.dense.close()
         sys.stderr.write("\tdone.\n")
         
     if args.interactive:

@@ -49,6 +49,7 @@ def get_all_orfs(seq, frame, query_length,
     
     # Note that query_pos is forward strand.
     for codon, orf_pos, query_pos in codons:
+        codon = codon.upper()
         if codon in START_CODONS and not in_reading_frame:
             in_reading_frame = True
             orf_start_pos = orf_pos

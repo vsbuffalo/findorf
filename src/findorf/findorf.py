@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-__version__ = 0.9
+__version__ = 1.01
 
 info = """
 findorf - ORF prediction and RNA contig annotation using comparative genomics
@@ -44,7 +44,7 @@ except ImportError, e:
 
 import templates
 from contig import Contig, GTF_FIELDS
-
+from utilities import pretty_summary
 
 # Which annotation keys to include in counting.
 SUMMARY_KEYS = set(['majority_frameshift', 'orf',
@@ -93,9 +93,6 @@ def predict_orf(args):
         orf = contig.predict_orf(args.e_value, pi_range_args)
         counter['total'] += 1
 
-
-    print "total", counter['total']
-
     if args.protein is not None:
         sys.stderr.write("[predict] writing protein sequences...")
         proteins = [x.protein for x in all_contigs.values() if x.protein is not None]
@@ -126,6 +123,8 @@ def predict_orf(args):
             args.dense.write(repr(c))
         args.dense.close()
         sys.stderr.write("\tdone.\n")
+
+    sys.stdout.write(pretty_summary(all_contigs))
         
     if args.interactive:
         go_interactive(all_contigs, None)

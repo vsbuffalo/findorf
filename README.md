@@ -25,6 +25,13 @@ of each separate BLASTX against relatives using the `join`
 subcommand. This is to ensure that if prediction is run with different
 parameters, this step is not unnecessarily repeated.
 
+    findorf join --ref contigs.fasta at:blast-a_thaliana_alt.xml bd:blast-b_distachyon_alt.xml \
+      zm:blast-z_mays_alt.xml os:blast--o_sativa_alt.xml
+
+Note that it is *highly* recommended organism abbreviation names are
+provided (otherwise they'll be extracted from the basename). These are
+then used throughout the predict stage as identifiers.
+
 ## `findorf` Predict
 
 The `predict` subcommand predicts ORFs and annotates contigs and
@@ -33,6 +40,19 @@ ORFs. Annotation refers not to biological or functional annotation
 annotation about the state of the contig as what its relative hits
 have to say about it. The following attributes are gathered for each
 contig, before making an ORF prediction.
+
+`predict` takes many options, for varying types of output.
+
+    findorf predict --gtf orfs.gtf --protein proteins.fasta --fasta orfs.fasta \
+      --dense dense.out -I -v
+
+In this case, `findorf` would predict ORFs (`predict`), output
+translated proteins (`--protein`), nucleotide ORFs (`--fasta`), GTF
+(`--gtf`), and a dense output (`--dense`), be verbose about it (`-v`),
+and then go interactive (`-I`) to allow Python-speaking users to look
+at the data more closely.
+
+Entering `findorf predict --help` will list all options.
 
 ### Majority Frame
 
@@ -51,6 +71,12 @@ we say there's a majority frameshift.
 
 There's also **any frameshift**, which indicates if any relative says
 there's a frameshift.
+
+### Inconsistent Strand
+
+`findorf` also checks that HSPs are on the same strand (allowing for
+different frames due to frameshift). This could be due do a local
+translocation, mis-assembly (conjoined contigs), or overlap.
 
 ### Anchor HSPs
 
@@ -149,11 +175,12 @@ annotated possibly containing an internal stop codon, as there 3'
 regions of the contig that contain alignment HSPs. All relatives are
 used for this step for maximum sensitivity.
 
-## Inconsistencies 
+## Annotation Inconsistencies 
 
-`findorf` does not try to push every possible case into a
-category. Furthermore, some steps work with the closest relative when
-it makes more sense (finding the best ORF out of a list), while
+In some cases, annotation `findorf` produces may appear
+inconsistent. `findorf` does not try to push every possible case into
+a category. Furthermore, some steps work with the closest relative
+when it makes more sense (finding the best ORF out of a list), while
 others, for maximum sensitivity, use all relatives.
 
 This can lead to tricky cases where the ORF prediction or annotation

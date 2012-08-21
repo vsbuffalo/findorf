@@ -339,5 +339,36 @@ class Contig():
         self.add_annotation('missing_start', self.orf.no_start)
         self.add_annotation('missing_stop', self.orf.no_stop)
         self.add_annotation('full_length', all((not self.orf.no_start, not self.orf.no_start)))
-        self.add_annotation('internal_stop', len(overlap_candidates) > 1)
+        self.add_annotation('internal_stop', self.internal_stop)
         return self.orf
+
+    @property
+    def internal_stop(self):
+        """
+        If there's an ORF predicted, check that there are no (1) no
+        other ORF candidats with overlaps (that's an internal stop)
+        and (2) that the 3' ends are not after the stop position.
+        """
+        if self.orf is None:
+            # we need an ORF for this - the ORF before the stop.
+            return False
+
+        if len(self.orfs_overlap) > 1:
+            return True
+
+        # getting the frame this way is necessary; there could be a
+        # frameshift (majority frame is None then) and a stop codon
+        frame = self.cr_ahsps.most_5prime.frame
+        l = len(self)
+
+        ahsps = self.relative_hsps.get_anchor_hsps()
+        for relative, ahsps in ahsps:
+            if frame < 0:
+                if self.orf.end < self.cr_ahsps.most_3prime.put_on_forward_strand(l).start:
+                    return True
+            else:
+                if self.orf.end < self.cr_ahsps.most_3prime.start:
+                    return True
+
+        return False
+                

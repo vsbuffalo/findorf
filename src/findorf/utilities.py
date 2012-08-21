@@ -82,6 +82,22 @@ def get_all_orfs(seq, frame, query_length,
 
     return all_orfs
 
+def pretty_summary(contigs):
+    summary = summarize_contigs(contigs)
+    
+    inorder_terms = ['has_orf',                      
+                     'full_length', 'missing_start', 'missing_stop', 'internal_stop',
+                     'majority_frameshift', 'missing_5prime',
+                     'inconsistent_strand', 'has_relatives']
+
+    out = ""
+    for term in inorder_terms:
+        out += term + ":\n"
+        for key, count in summary[term].items():
+            out += "  %s: %d\n" % (key, count)
+
+    return out
+
 def summarize_contigs(contigs):
     """
     Summarize annotation.
@@ -89,6 +105,7 @@ def summarize_contigs(contigs):
 
     terms = ['majority_frameshift', 'missing_5prime', 'hsp_orf_overlap',
              'inconsistent_strand', 'has_orf', 'has_relatives',
+             'full_length',
              'missing_start', 'missing_stop', 'internal_stop',
              'num_relatives', 'num_orf_candidates', 'closest_relative']
 

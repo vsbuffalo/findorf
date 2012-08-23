@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-__version__ = 1.01
+__version__ = 1.02
 
 info = """
 findorf - ORF prediction and RNA contig annotation using comparative genomics
@@ -25,13 +25,15 @@ identity constraints (as integers out of 100), i.e.:
 """ % __version__
 
 import sys
-# import pdb
+import pdb
 import csv
 import argparse
 import os
 import code
 from string import Template
 from collections import Counter, namedtuple, defaultdict
+from multiprocessing import Pool
+import subprocess
 import csv
 import cPickle
 from operator import itemgetter, attrgetter
@@ -39,12 +41,14 @@ try:
     from Bio.Blast import NCBIXML
     from Bio import SeqIO
     from Bio.Seq import Seq
+    from Bio.SeqRecord import SeqRecord
 except ImportError, e:
     sys.exit("Cannot import BioPython modules; please install it.")
 
 import templates
 from contig import Contig, GTF_FIELDS
 from utilities import pretty_summary
+import blast
 
 # Which annotation keys to include in counting.
 SUMMARY_KEYS = set(['majority_frameshift', 'orf',
@@ -122,6 +126,22 @@ def predict_orf(args):
         for c in all_contigs.values():
             args.dense.write(repr(c))
         args.dense.close()
+        sys.stderr.write("\tdone.\n")
+
+    if args.frameshift is not None:
+        sys.stderr.write("[predict] writing frameshifts...")
+        seqs = [SeqRecord(seq=c.seq, id=c.id) for c in all_contigs.values() if c.get_annotation('majority_frameshift')]
+        SeqIO.write(seqs, args.frameshift, "fasta")
+        args.fasta.close()
+        sys.stderr.write("\tdone.\n")
+
+    if args.stop is not None:
+        sys.stderr.write("[predict] writing contigs with internal stop codons...")
+        seqs = [SeqRecord(seq=c.seq, id=c.id) for c in all_contigs.values() if
+                not c.get_annotation('majority_frameshift') and
+                c.internal_stop]
+        SeqIO.write(seqs, args.stop, "fasta")
+        args.fasta.close()
         sys.stderr.write("\tdone.\n")
 
     sys.stdout.write(pretty_summary(all_contigs))
@@ -217,6 +237,21 @@ def parse_percent_identity_args(args):
         raise argparse.ArgumentTypeError(msg)
     return pi_range_args
 
+def run_blast(args):
+    """
+    Run blastx on the input file. All arguments are extracted from
+    sys.argv and passed directly to blast+'s blastx.
+    """
+    blastx_args = blast.make_blast_args(args.blast_args) # last entry should be input file
+    if len(blastx_args) > 0:
+        sys.stderr.write("[blast] passing args '%s' to blast.\n" % blastx_args.items())
+
+    sys.stderr.write("[blast] making blast calls...")
+    databases = blast.extract_databases(args.databases)
+    sys.stderr.write("\tdone.\n")
+    
+    blast.blast_all_relatives(args.input, databases, **blastx_args)
+
 def main():
     parser = argparse.ArgumentParser(description=info)
     subparsers = parser.add_subparsers(help="sub-commands")
@@ -271,14 +306,33 @@ def main():
                                 help=("A relative-specific percent identity "
                                       "range in teh format at:99,100, where"
                                       "at is the same identifier used in join"))
-    parser_predict.add_argument('-o', '--fasta', type=argparse.FileType('w'), 
+    parser_predict.add_argument('-f', '--fasta', type=argparse.FileType('w'), 
                                 default=None,
                                 help="FASTA file to output full length ORFs")
     parser_predict.add_argument('-p', '--protein', type=argparse.FileType('w'), 
                                 default=None,
                                 help="FASTA file to output translated proteins")
+    parser_predict.add_argument('-F', '--frameshift', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output frameshifted ORFs")
+    parser_predict.add_argument('-s', '--stop', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output internal stop codon ORFs (but not frameshift)")
 
     parser_predict.set_defaults(func=predict_orf)
+
+    ## blast arguments
+    parser_blast = subparsers.add_parser('blast', help="run blastx; all arguments are for blastx")
+    parser_blast.add_argument('-p', '--processes', type=int,
+                              default=1,
+                              help="the number of processes to distribute blast calls across")
+    parser_blast.add_argument('-a', '--blast-args', type=str,
+                              help="a quoted set of blastx arguments")
+    parser_blast.add_argument('input', type=str,
+                              help="the FASTA input file")
+    parser_blast.add_argument('databases', type=str, nargs="+",
+                              help="blast relative databases; in quotes for virtual databases")
+    parser_blast.set_defaults(func=run_blast)
 
     args = parser.parse_args()
 

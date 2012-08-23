@@ -6,7 +6,7 @@ except ImportError:
 
 setup(
     name='findorf',
-    version=0.9,
+    version=1.02,
     author='Vince Buffalo',
     author_email='vsbuffalo@gmail.com',
     packages=find_packages('src'),

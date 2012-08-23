@@ -51,9 +51,9 @@ def blast_all_relatives(input_file, databases, num_processes=4, **blastx_args):
                              '\n'.join(failed_cmds))
         sys.stderr.write("[blast] blast worker pool complete.\n")
 
-    sys.stderr.write("[blast] outputting a string to be passed to join process "
-                     "via command line.\n")
-    sys.stdout.write(' '.join(["%s:%s" % (k, v) for k, v in databases.items()]))
+    # sys.stderr.write("[blast] outputting a string to be passed to join process "
+    #                  "via command line.\n")
+    # sys.stdout.write(' '.join(["%s:%s" % (k, v) for k, v in databases.items()]))
 
 
 def blast_cmd_caller(x):

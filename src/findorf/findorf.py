@@ -32,8 +32,6 @@ import os
 import code
 from string import Template
 from collections import Counter, namedtuple, defaultdict
-from multiprocessing import Pool
-import subprocess
 import csv
 import cPickle
 from operator import itemgetter, attrgetter

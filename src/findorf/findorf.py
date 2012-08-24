@@ -142,12 +142,12 @@ def predict_orf(args):
         args.fasta.close()
         sys.stderr.write("\tdone.\n")
 
-    sys.stdout.write(pretty_summary(all_contigs))
+    sys.stdout.write(pretty_summary(all_contigs.values())
         
     if args.interactive:
         go_interactive(all_contigs, None)
-    # for debugging with python -i
-    return all_contigs
+    # # for debugging with python -i
+    # return all_contigs
         
 
 def join_blastx_results(args):

@@ -264,7 +264,7 @@ def main():
                              default="joined_blastx_dbs.pkl",
                              help=("joined results of all the BLASTX "
                               "results files (Python pickle file)"))
-    parser_join.add_argument('--ref', type=str, required=False,
+    parser_join.add_argument('--ref', type=str, required=True,
                              help=("the FASTA reference that corresponds "
                                    "to BLASTX queries."))
 
@@ -272,7 +272,7 @@ def main():
 
     ## predict arguments
     parser_predict = subparsers.add_parser('predict', help="predict ORFs")
-
+    
     parser_predict.add_argument('--input', type=str,
                                 default="joined_blastx_dbs.pkl",
                                 help=("the joined results of all BLASTX "
@@ -329,7 +329,7 @@ def main():
     parser_blast.add_argument('input', type=str,
                               help="the FASTA input file")
     parser_blast.add_argument('databases', type=str, nargs="+",
-                              help="blast relative databases; in quotes for virtual databases")
+                              help="blast relative databases")
     parser_blast.set_defaults(func=run_blast)
 
     args = parser.parse_args()

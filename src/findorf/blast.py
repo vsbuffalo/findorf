@@ -16,7 +16,7 @@ REQUIRED_BLASTX_PARAMS = dict(num_alignments=1,
 DEFAULT_BLASTX_PARAMS = dict(evalue=0.001)
 
 
-def blast_all_relatives(input_file, databases, num_processes=4, **blastx_args):
+def blast_all_relatives(input_file, databases, num_processes=4, outdir=None, **blastx_args):
     """
     The core blasting function; called internally and via command like
     subcommand 'blast' (which is first run through findorf.run_blast
@@ -27,8 +27,11 @@ def blast_all_relatives(input_file, databases, num_processes=4, **blastx_args):
     blastx arguments.
     """
     sys.stderr.write("[blast] making blast calls...")
-    blast_calls = make_all_relative_blastx_calls(input_file, databases, **blastx_args)
+    blast_calls = make_all_relative_blastx_calls(input_file, databases, outdir=outdir,
+                                                 **blastx_args)
     sys.stderr.write("\tdone.\n")
+
+    # formats = dict(5='tab', 6='xml')
 
     if num_processes == 1:
         for call in blast_calls:
@@ -97,7 +100,7 @@ def call_blast(blast_commands):
 
 
 def make_all_relative_blastx_calls(seqfile, relatives, outdir="blasts",
-                         processes=2, **blast_params):
+                                   processes=2, **blast_params):
     """
     Given a sequences file, and a dictionary of relatives; blastx all
     sequences against each, in parallel.
@@ -114,7 +117,7 @@ def make_all_relative_blastx_calls(seqfile, relatives, outdir="blasts",
     for relative, database in relatives.items():
         try:
             cmd = NcbiblastxCommandline(query=seqfile, db=database, 
-                                        out=join(outdir, "%s.xml" % relative),
+                                        out=join(outdir, "%s.%s" % (relative, format)),
                                         **params)
         except ValueError, error:
             msg = "a BLASTX parameter was specified that does not exist:\n"

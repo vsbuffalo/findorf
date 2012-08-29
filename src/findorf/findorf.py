@@ -45,8 +45,9 @@ except ImportError, e:
 
 import templates
 from contig import Contig, GTF_FIELDS
-from utilities import pretty_summary
+from utilities import pretty_summary, join_blastx
 import blast
+import findall
 
 # Which annotation keys to include in counting.
 SUMMARY_KEYS = set(['majority_frameshift', 'orf',
@@ -130,7 +131,7 @@ def predict_orf(args):
         sys.stderr.write("[predict] writing frameshifts...")
         seqs = [SeqRecord(seq=c.seq, id=c.id) for c in all_contigs.values() if c.get_annotation('majority_frameshift')]
         SeqIO.write(seqs, args.frameshift, "fasta")
-        args.fasta.close()
+        args.frameshift.close()
         sys.stderr.write("\tdone.\n")
 
     if args.stop is not None:
@@ -139,85 +140,31 @@ def predict_orf(args):
                 not c.get_annotation('majority_frameshift') and
                 c.internal_stop]
         SeqIO.write(seqs, args.stop, "fasta")
-        args.fasta.close()
+        args.stop.close()
         sys.stderr.write("\tdone.\n")
 
-    sys.stdout.write(pretty_summary(all_contigs.values())
+    if args.no_relatives is not None:
+        sys.stderr.write("[predict] writing contigs with no relatives...")
+        seqs = [SeqRecord(seq=c.seq, id=c.id) for c in all_contigs.values() if
+                not c.get_annotation('has_relatives')]
+        SeqIO.write(seqs, args.no_relatives, "fasta")
+        args.no_relatives.close()
+        sys.stderr.write("\tdone.\n")
+
+    sys.stdout.write(pretty_summary(all_contigs.values()))
         
     if args.interactive:
         go_interactive(all_contigs, None)
     # # for debugging with python -i
     # return all_contigs
-        
 
 def join_blastx_results(args):
     """
-    Each BLAST XML result file contains different alignments, each
-    with possibly multiple HSPs. The foreign key is the contig ID,
-    which is also the BLAST query ID. This of course is also the key
-    between the BLAST results and the reference contig FASTA file.
-
-    This function builds a dictionary which each key being the contig
-    ID and each value being another dictionary in which each
-    'relative' is the BLAST result file and the values are the BLAST
-    results.
+    Bridge args input to join_blastx_results so that the latter has a
+    cleaner interface when used with module import.
     """
-    # Load all sequences into new Contig objects
-    contigs = dict()
-    sys.stderr.write("[join] loading all contig sequences...\t")
-    for record in SeqIO.parse(args.ref, "fasta"):
-        contigs[record.id] = Contig(record)
-    sys.stderr.write("done.\n")
-    
-    # For each relative alignment, add the HSPs via Contig's
-    # add_relative method
-    blast_files = parse_blastx_args(args.blastx)
-
-    for relative, blast_file in blast_files.items():
-        sys.stderr.write("[join] processing BLAST file '%s'...\t" % relative)
-
-        for record in NCBIXML.parse(blast_file):
-            query_id = record.query.strip().split()[0]
-
-            # add the relative's alignment information, which actually
-            # adds HSPs to relative HSPs attribute
-            contigs[query_id].add_relative_alignment(relative, record)
-
-        sys.stderr.write("done.\n")
-
-    # dump the joined contigs
-    cPickle.dump(contigs, file=args.output)
-
-def parse_blastx_args(args):
-    """
-    Take a list of args and return a dictionary of names and files. If
-    any arg is of the key:value sort, the name will be the
-    user-defined key; otherwise they will be extracted from the file
-    name.
-    """
-    blastx_files = dict()
-    for arg in args:
-        tmp = arg.split(":")
-        if len(tmp) == 2:
-            name, value = tmp
-            if blastx_files.get(name, False):
-                msg = "key '%s' dy exists in blastx args" % name
-                raise argparse.ArgumentTypeError(msg)
-            blastx_files[name] = value
-        elif len(tmp) == 1:
-            blastx_files[os.path.splitext(os.path.basename(arg))[0]] = arg
-        else:
-            msg = "malformed key-value pair in argument: '%s'" % arg
-            raise argparse.ArgumentTypeError(msg)
-
-    # now open all file handles
-    try:
-        handles = dict([(k, open(f, 'r')) for k, f in blastx_files.items()])
-    except IOError, e:
-        msg = "could not open BLASTX XML result '%s' - no such file.\n"
-        sys.exit(msg % e.filename)
-    return handles
-
+    join_blastx(args.ref, args.blastx, args.output)
+     
 def parse_percent_identity_args(args):
     """
     Parse the percent identity threshold arguments, making them None
@@ -249,6 +196,9 @@ def run_blast(args):
     sys.stderr.write("\tdone.\n")
     
     blast.blast_all_relatives(args.input, databases, **blastx_args)
+
+def findall_orfs(args):
+    findall.findall(args.contigs)
 
 def main():
     parser = argparse.ArgumentParser(description=info)
@@ -316,11 +266,14 @@ def main():
     parser_predict.add_argument('-s', '--stop', type=argparse.FileType('w'), 
                                 default=None,
                                 help="FASTA file to output internal stop codon ORFs (but not frameshift)")
+    parser_predict.add_argument('-n', '--no-relatives', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output contigs without relatives")
 
     parser_predict.set_defaults(func=predict_orf)
 
     ## blast arguments
-    parser_blast = subparsers.add_parser('blast', help="run blastx; all arguments are for blastx")
+    parser_blast = subparsers.add_parser('blast', help="run blastx")
     parser_blast.add_argument('-p', '--processes', type=int,
                               default=1,
                               help="the number of processes to distribute blast calls across")
@@ -332,6 +285,18 @@ def main():
                               help="blast relative databases")
     parser_blast.set_defaults(func=run_blast)
 
+    ## findall arguments
+    parser_findall = subparsers.add_parser('findall', help="find all ORFs by brute force")
+    parser_findall.add_argument('-k', '--kullback-leibler', action="store_true",
+                                default=True,
+                                help="Pick the best ORF based on K-L divergence to known ORFs")
+    parser_findall.add_argument('-f', '--full-length', type=argparse.FileType('r'),
+                                default=None,
+                                help="FASTA file of full length ORFs")
+    
+    parser_findall.add_argument('contigs', type=str, 
+                                help="FASTA file of contigs without relatives")
+    parser_findall.set_defaults(func=findall_orfs)
     args = parser.parse_args()
 
     ## Run the appropriate step

@@ -29,3 +29,8 @@ importGTF <- function(file) {
 }
 
 d <- importGTF("src/findorf/nrev.gtf")
+
+## verify some aspects of annotation
+stopifnot(sum(table(d$has_orf)) == )
+
+ggplot(d) + geom_bar(aes())

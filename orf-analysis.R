@@ -1,6 +1,4 @@
 ## orf_analysis.R -- look at GTF from findorf
-library(ggplot2)
-
 GTF.FIELDS <- c("seqname", "source", "feature", "start",
                 "end", "score", "strand", "frame", "group")
 
@@ -25,12 +23,13 @@ importGTF <- function(file) {
   group <- do.call(rbind, lapply(splits, makeUnragged))
   tmp <- cbind(d[, -9], group)
   tmp$orf.length <- with(tmp, end-start)
+  tmp$missing_start <- as.logical(tmp$missing_start)
+  tmp$missing_stop <- as.logical(tmp$missing_stop)
+  tmp$has_relatives <- as.logical(tmp$has_relative)
+  tmp$hsp_orf_overlap <- as.logical(tmp$hsp_orf_overlap)
+  tmp$inconsistent_strand <- as.logical(tmp$inconsistent_strand)
+  tmp$majority_frameshift <- as.logical(tmp$majority_frameshift)
+  tmp$missing_5prime <- as.logical(tmp$missing_5prime)
+  tmp$internal_stop <- as.logical(tmp$internal_stop)
   return(tmp)
 }
-
-d <- importGTF("src/findorf/nrev.gtf")
-
-## verify some aspects of annotation
-stopifnot(sum(table(d$has_orf)) == )
-
-ggplot(d) + geom_bar(aes())

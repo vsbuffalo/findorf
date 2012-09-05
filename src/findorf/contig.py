@@ -32,7 +32,7 @@ except ImportError, e:
 from RangedFeatures import HSP, AnchorHSPs, RelativeHSPs, indent
 import predict
 from templates import contig_str
-from utilities import put_seq_in_frame
+
 
 GTF_FIELDS = ("seqname", "source", "feature", "start",
               "end", "score", "strand", "frame", "group")        

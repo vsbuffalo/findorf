@@ -198,7 +198,7 @@ def run_blast(args):
     blast.blast_all_relatives(args.input, databases, **blastx_args)
 
 def findall_orfs(args):
-    findall.findall(args.contigs)
+    findall.findall(args.contigs, min_length=args.min_length, translate=args.translate)
 
 def main():
     parser = argparse.ArgumentParser(description=info)
@@ -293,7 +293,8 @@ def main():
     parser_findall.add_argument('-f', '--full-length', type=argparse.FileType('r'),
                                 default=None,
                                 help="FASTA file of full length ORFs")
-    
+    parser_findall.add_argument('-t', '--translate', help="translate sequences", action="store_true")
+    parser_findall.add_argument('-m', '--min_length', help="minimum length to output", type=int, default=30)
     parser_findall.add_argument('contigs', type=str, 
                                 help="FASTA file of contigs without relatives")
     parser_findall.set_defaults(func=findall_orfs)

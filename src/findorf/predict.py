@@ -7,8 +7,10 @@ ContigSequence; these prediction and annotation rules are those that
 can be applied to infer ORFs and annotation.
 
 """
-
-from utilities import get_all_orfs, get_codons
+try:
+    from utilities import get_all_orfs, get_codons
+except ImportError:
+    pass
 
 def orf_with_frameshift(seq, closest_relative_anchors,
                         missing_5prime, key='e'):

@@ -167,8 +167,9 @@ class Contig():
         current_anno = self.annotation.items()
         attribute_anno = [('has_relatives', self.has_relatives),
                           ('num_relatives', len(self.relative_hsps)),
-                           ('has_orf', self.orf is not None),
-                           ('num_orf_candidates', len(self.orf_candidates))]
+                          ('has_orf', self.orf is not None),
+                          ('contig_length', len(self)),
+                          ('num_orf_candidates', len(self.orf_candidates))]
 
         self.annotation =  dict(current_anno + attribute_anno)
         

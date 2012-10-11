@@ -5,34 +5,7 @@ library(knitr)
 library(ggplot2)
 source("orf-analysis.R")
 
-d <- importGTF("src/findorf/nrev.gtf")
-
-# append a column annotating fullness
-d$missing_start <- as.logical(d$missing_start)
-d$missing_stop <- as.logical(d$missing_stop)
-d$has_relatives <- as.logical(d$has_relative)
-d$hsp_orf_overlap <- as.logical(d$hsp_orf_overlap)
-d$inconsistent_strand <- as.logical(d$inconsistent_strand)
-d$majority_frameshift <- as.logical(d$majority_frameshift)
-d$missing_5prime <- as.logical(d$missing_5prime)
-d$internal_stop <- as.logical(d$internal_stop)
-
-d$status <- NA
-d$status[d$missing_start & !d$missing_stop] <- "missing start"
-d$status[d$missing_stop & !d$missing_start] <- "missing stop"
-d$status[d$missing_start & d$missing_stop] <- "missing start and stop"
-d$status[!d$missing_start & !d$missing_stop] <- "full length"
-d$status[is.na(d$status) & !d$hsp_orf_overlap] <- "no ORF/HSP overlap"
-d$status[is.na(d$status) & d$inconsistent_strand] <- "inconsistent strand"
-
-d$alt_status <- NA
-d$alt_status[d$missing_5prime] <- "missing 5'"
-d$alt_status[!d$missing_5prime] <- "not missing 5'"
-d$alt_status[d$missing_5prime & d$majority_frameshift] <- "missing 5' & majority frameshift"
-d$alt_status[!d$missing_5prime & d$majority_frameshift ] <- "majority frameshift"
-d$alt_status[is.na(d$alt_status) & d$internal_stop] <- "internal stop"
-d$alt_status[!d$missing_5prime & !d$majority_frameshift & !d$internal] <- "no missing 5', frameshift, or internal stop"
-
+d <- importGTF("out.gtf")
 
 # verify some aspects of annotation
 stopifnot(sum(table(d$has_orf)) == nrow(d)) # has_orf defined for all contigs

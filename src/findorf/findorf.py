@@ -272,24 +272,24 @@ def main():
 
     parser_predict.set_defaults(func=predict_orf)
 
-    ## blast arguments
-    parser_blast = subparsers.add_parser('blast', help="run blastx")
-    parser_blast.add_argument('-p', '--processes', type=int,
-                              default=1,
-                              help="the number of processes to distribute blast calls across")
-    parser_blast.add_argument('-a', '--blast-args', type=str,
-                              help="a quoted set of blastx arguments")
-    parser_blast.add_argument('input', type=str,
-                              help="the FASTA input file")
-    parser_blast.add_argument('databases', type=str, nargs="+",
-                              help="blast relative databases")
-    parser_blast.set_defaults(func=run_blast)
+    # ## blast arguments
+    # parser_blast = subparsers.add_parser('blast', help="run blastx")
+    # parser_blast.add_argument('-p', '--processes', type=int,
+    #                           default=1,
+    #                           help="the number of processes to distribute blast calls across")
+    # parser_blast.add_argument('-a', '--blast-args', type=str,
+    #                           help="a quoted set of blastx arguments")
+    # parser_blast.add_argument('input', type=str,
+    #                           help="the FASTA input file")
+    # parser_blast.add_argument('databases', type=str, nargs="+",
+    #                           help="blast relative databases")
+    # parser_blast.set_defaults(func=run_blast)
 
     ## findall arguments
     parser_findall = subparsers.add_parser('findall', help="find all ORFs by brute force")
-    parser_findall.add_argument('-k', '--kullback-leibler', action="store_true",
-                                default=True,
-                                help="Pick the best ORF based on K-L divergence to known ORFs")
+    # parser_findall.add_argument('-k', '--kullback-leibler', action="store_true",
+    #                             default=True,
+    #                             help="Pick the best ORF based on K-L divergence to known ORFs")
     parser_findall.add_argument('-f', '--full-length', type=argparse.FileType('r'),
                                 default=None,
                                 help="FASTA file of full length ORFs")

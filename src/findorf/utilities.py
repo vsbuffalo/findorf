@@ -111,7 +111,7 @@ def summarize_contigs(contigs):
 
     terms = ['majority_frameshift', 'missing_5prime', 'hsp_orf_overlap',
              'inconsistent_strand', 'has_orf', 'has_relatives',
-             'full_length',
+             'full_length', 'contig_length',
              'missing_start', 'missing_stop', 'internal_stop',
              'num_relatives', 'num_orf_candidates', 'closest_relative']
 

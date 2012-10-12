@@ -70,7 +70,6 @@ def go_interactive(contigs, summary):
     code.InteractiveConsole(locals=dict(contigs=contigs, summary=summary,
                                         u=utilities)).interact()
 
-
 def predict_orf(args):
     """
     First, parse the relative percenty identity arguments.
@@ -149,6 +148,22 @@ def predict_orf(args):
                 not c.get_annotation('has_relatives')]
         SeqIO.write(seqs, args.no_relatives, "fasta")
         args.no_relatives.close()
+        sys.stderr.write("\tdone.\n")
+
+    if args.five_prime_utrs is not None:
+        sys.stderr.write("[predict] writing 5'-UTRs...")
+        seqs = [SeqRecord(seq=c.three_prime_utr(), id=c.id + " 5'-UTR sequence") for c in all_contigs.values()]
+        seqs = filter(lambda x: x.seq is not None, seqs)
+        SeqIO.write(seqs, args.five_prime_utrs, "fasta")
+        args.five_prime_utrs.close()
+        sys.stderr.write("\tdone.\n")
+
+    if args.three_prime_utrs is not None:
+        sys.stderr.write("[predict] writing 3'-UTRs...")
+        seqs = [SeqRecord(seq=c.five_prime_utr(), id=c.id + " 3'-UTR sequence") for c in all_contigs.values()]
+        seqs = filter(lambda x: x.seq is not None, seqs)
+        SeqIO.write(seqs, args.three_prime_utrs, "fasta")
+        args.three_prime_utrs.close()
         sys.stderr.write("\tdone.\n")
 
     sys.stdout.write(pretty_summary(all_contigs.values()))
@@ -269,6 +284,12 @@ def main():
     parser_predict.add_argument('-n', '--no-relatives', type=argparse.FileType('w'), 
                                 default=None,
                                 help="FASTA file to output contigs without relatives")
+    parser_predict.add_argument('-3', '--three-prime-utrs', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output the 3'-UTRs, for disjoining")
+    parser_predict.add_argument('-5', '--five-prime-utrs', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output the 5'-UTRs, for disjoining")
 
     parser_predict.set_defaults(func=predict_orf)
 

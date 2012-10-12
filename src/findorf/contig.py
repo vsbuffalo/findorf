@@ -249,6 +249,28 @@ class Contig():
             return SeqRecord(seq=seq, id=self.id)
         return None
 
+    def five_prime_utr(self):
+        """
+        Return the 5'-UTR sequences of contigs with ORFS (full ORFs
+        and partials).
+        """
+        if self.orf is None:
+            return None
+
+        return self.orf.get_5prime_utr(self)
+        
+        
+    def three_prime_utr(self):
+        """
+        Return the 3'-UTR sequences of contigs with ORFs (full ORFs
+        and partials).
+        """
+        if self.orf is None:
+            return None
+
+        return self.orf.get_3prime_utr(self)
+        
+
     def predict_orf(self, e_value=None, pi_range=None, qs_thresh=16, ss_thresh=40):
         """
         Predict an ORF, given some parameters.
@@ -326,12 +348,6 @@ class Contig():
             return None
         else:
             self.add_annotation('hsp_orf_overlap', True)
-
-        # we sort by overlap query start. If reverse strand, we
-        # reverse the order sorted order (since they were added)
-        # if frame < 0:
-        #     overlap_candidates = sorted(overlap_candidates,
-        #                                 key=lambda x: x.abs_start(), reverse=True)
 
         self.orf = overlap_candidates[0]
         self.orfs_overlap = overlap_candidates

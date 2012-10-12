@@ -616,6 +616,35 @@ class ORF():
             return contig.seq.reverse_complement()[start:end]
         return contig.seq[start:end]
 
+    def get_5prime_utr(self, contig):
+        """
+        Get the 5'-UTR sequence from a given contig and ORF object.
+        """
+        if contig.__class__.__name__ != "Contig":
+            raise TypeError("'contig' must be a Contig object")
+        end = self.end
+        start = self.start
+        if self.no_start:
+            return None
+        if self.frame < 0:
+            return contig.seq.reverse_complement()[start:end]
+        return contig.seq[:start]
+
+    
+    def get_3prime_utr(self, contig):
+        """
+        Get the 3'-UTR sequence from a given contig and ORF object.
+        """
+        if contig.__class__.__name__ != "Contig":
+            raise TypeError("'contig' must be a Contig object")
+        end = self.end
+        start = self.start
+        if self.no_stop:
+            return None
+        if self.frame < 0:
+            return contig.seq.reverse_complement()[start:end]
+        return contig.seq[end:]
+
     def __len__(self):
         return len(self.range)
 

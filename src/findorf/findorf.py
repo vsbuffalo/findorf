@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 __version__ = 1.02
 
-info = """
+INFO = """
 findorf - ORF prediction and RNA contig annotation using comparative genomics
 version: %s
 
@@ -26,25 +26,20 @@ identity constraints (as integers out of 100), i.e.:
 
 import sys
 import pdb
-import csv
 import argparse
-import os
 import code
+import re
 from string import Template
-from collections import Counter, namedtuple, defaultdict
-import csv
+from collections import Counter
 import cPickle
-from operator import itemgetter, attrgetter
 try:
-    from Bio.Blast import NCBIXML
     from Bio import SeqIO
-    from Bio.Seq import Seq
     from Bio.SeqRecord import SeqRecord
-except ImportError, e:
+except ImportError:
     sys.exit("Cannot import BioPython modules; please install it.")
 
 import templates
-from contig import Contig, GTF_FIELDS
+from contig import GTF_FIELDS
 from utilities import pretty_summary, join_blastx
 import blast
 import findall
@@ -58,14 +53,18 @@ SUMMARY_KEYS = set(['majority_frameshift', 'orf',
                     'full_length', 'contains_stop'])
 
 def go_interactive(contigs, summary):
+    """
+    Give the user the ability to explore underlying data structures
+    interactively. Primarily for debugging, but useful for examining
+    corner cases.
+    """
     try:
         import readline
         import utilities
     except ImportError:
         pass
-    else:
         import rlcompleter
-        readline.parse_and_bind("tab: complete")                    
+        readline.parse_and_bind("tab: complete")
         
     code.InteractiveConsole(locals=dict(contigs=contigs, summary=summary,
                                         u=utilities)).interact()
@@ -89,15 +88,18 @@ def predict_orf(args):
         # Predict ORF and update contig annotation
         if args.verbose:
             if counter['total'] % 1000 == 0:
-               sys.stderr.write("\t%d out of %d contigs processed\r"
-                                % (counter['total'], len(all_contigs)))
-               sys.stderr.flush()
-        orf = contig.predict_orf(args.e_value, pi_range_args)
+                sys.stderr.write("\t%d out of %d contigs processed\r"
+                                 % (counter['total'], len(all_contigs)))
+                sys.stderr.flush()
+
+        # predict the ORF. Output is a boolean we don't care about
+        # whether one has actually been predicted
+        _ = contig.predict_orf(args.e_value, pi_range_args)
         counter['total'] += 1
 
     if args.protein is not None:
         sys.stderr.write("[predict] writing protein sequences...")
-        proteins = [x.protein for x in all_contigs.values() if x.protein is not None]
+        proteins = filter(lambda x: x.protein is not None, all_contigs.values())
         SeqIO.write(proteins, args.protein, "fasta")
         args.protein.close()
         sys.stderr.write("\tdone.\n")
@@ -195,7 +197,7 @@ def parse_percent_identity_args(args):
                "must be in format rel:x,y where rel is the relative "
                "identifier from the join operation and 0 < x, y <= 100.\n")
         raise argparse.ArgumentTypeError(msg)
-    return pi_range_args
+    return pi_ranges
 
 def run_blast(args):
     """
@@ -216,7 +218,11 @@ def findall_orfs(args):
     findall.findall(args.contigs, min_length=args.min_length, translate=args.translate)
 
 def main():
-    parser = argparse.ArgumentParser(description=info)
+    """
+    main() is the entry point to findorf's functionality.
+    """
+    
+    parser = argparse.ArgumentParser(description=INFO)
     subparsers = parser.add_subparsers(help="sub-commands")
 
     ## join arguments
@@ -325,4 +331,4 @@ def main():
     return args.func(args)
 
 if __name__ == "__main__":
-    out = main()
+    main()

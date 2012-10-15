@@ -16,17 +16,12 @@ http://biopython.org/DIST/docs/api/Bio.Blast.Record.HSP-class.html
 
 import sys
 import pdb
-from collections import Counter, defaultdict
 from string import Template
-from operator import itemgetter, attrgetter
-from math import floor
 
 try:
-    from Bio.Blast import NCBIXML
     from Bio import SeqIO
-    from Bio.Seq import Seq
     from Bio.SeqRecord import SeqRecord
-except ImportError, e:
+except ImportError:
     sys.exit("Cannot import BioPython modules; please install it.")
 
 from RangedFeatures import HSP, AnchorHSPs, RelativeHSPs, indent
@@ -61,7 +56,8 @@ class Contig():
         # core data attributes
         self.id = record.id
         self.seq = record.seq
-
+        self.description = record.description
+        
         # information added by blastx results
         self.relative_hsps = RelativeHSPs()
 
@@ -79,13 +75,13 @@ class Contig():
         A string summary of the Contig object.
         """
         out = '-' * 80 + "\n"
-        info = dict(id=self.id, length=len(self),
+        info = dict(id=self.id, length=len(self.seq),
                     num_relatives=len(self.relative_hsps),
                     majority_frame=self.relative_hsps.majority_frame,
                     majority_frameshift=self.relative_hsps.majority_frameshift,
                     inconsistent_strand=self.relative_hsps.inconsistent_strand,
                     relative=self.get_annotation('closest_relative'),
-                    missing_5prime=self.relative_hsps.missing_5prime(len(self)),
+                    missing_5prime=self.relative_hsps.missing_5prime(len(self.seq)),
                     overlap=self.get_annotation('hsp_orf_overlap'),
                     orf=self.orf)
         
@@ -114,6 +110,7 @@ class Contig():
         """
         Return the contig length.
         """
+        pdb.set_trace()
         return len(self.seq)
         
     def add_relative_alignment(self, relative, blast_record):
@@ -168,7 +165,7 @@ class Contig():
         attribute_anno = [('has_relatives', self.has_relatives),
                           ('num_relatives', len(self.relative_hsps)),
                           ('has_orf', self.orf is not None),
-                          ('contig_length', len(self)),
+                          ('contig_length', len(self.seq)),
                           ('num_orf_candidates', len(self.orf_candidates))]
 
         self.annotation =  dict(current_anno + attribute_anno)
@@ -197,19 +194,25 @@ class Contig():
         # we increment the start because GTF is 1-indexed, but not for
         # the end, since we want the ORF to (but not including) the
         # stop codon.
-        out["start"] = self.orf.abs_start() + 1 if self.orf is not None else '.'
-        out["end"] = self.orf.abs_end(len(self)) + 1 if self.orf is not None else '.'
+
+        if self.orf is not None:
+            out["start"] = self.orf.abs_start() + 1
+            out["end"] = self.orf.abs_end(len(self.seq)) + 1
+        else:
+            out["start"] = "."
+            out["end"] = "."
+            
         out["score"] = "."
 
-        mf = self.relative_hsps.majority_frame
-        if mf is not None:
-            out["strand"] = mf/abs(mf)
+        maj_frame = self.relative_hsps.majority_frame
+        if maj_frame is not None:
+            out["strand"] = maj_frame/abs(maj_frame)
         else:
             out["strand"] = "."
             
-        if mf is not None:
+        if maj_frame is not None:
             # GFF uses frames in [0, 2]
-            out["frame"] = abs(mf) - 1
+            out["frame"] = abs(maj_frame) - 1
         else:
             out["frame"] = "."
             out["group"] = "."
@@ -236,7 +239,9 @@ class Contig():
         if self.orf is not None:
             seq = self.orf.get_sequence(self)
             frame = self.relative_hsps.majority_frame
-            return SeqRecord(seq=seq.translate(), id=self.id)
+            desc = self.description + " translated from frame %s" % str(frame)
+            return SeqRecord(seq=seq.translate(), id=self.id,
+                             description=self.description)
         return None
 
     @property
@@ -257,8 +262,13 @@ class Contig():
         if self.orf is None:
             return None
 
-        return self.orf.get_5prime_utr(self)
-        
+        # handle non-likely-pseudogene case
+        is_likely_pseudogene = (self.internal_stop and
+                                not self.relative_hsps.majority_frame)
+        if not is_likely_pseudogene:
+            return self.orf.get_5prime_utr(self)
+        else:
+            return None
         
     def three_prime_utr(self):
         """
@@ -268,7 +278,13 @@ class Contig():
         if self.orf is None:
             return None
 
-        return self.orf.get_3prime_utr(self)
+        # handle non-likely-pseudogene case
+        is_likely_pseudogene = (self.internal_stop and
+                                not self.relative_hsps.majority_frame)
+        if not is_likely_pseudogene:
+            return self.orf.get_3prime_utr(self)
+        else:
+            return None
         
 
     def predict_orf(self, e_value=None, pi_range=None, qs_thresh=16, ss_thresh=40):
@@ -314,7 +330,7 @@ class Contig():
         self.add_annotation('closest_relative', closest_relative)
         
         # get whether the relative HSPs indicate a missing 5' or frameshift 
-        missing_5prime = rel_hsps.missing_5prime(len(self), qs_thresh, ss_thresh)
+        missing_5prime = rel_hsps.missing_5prime(len(self.seq), qs_thresh, ss_thresh)
         self.add_annotation('missing_5prime', missing_5prime)
         majority_frameshift = rel_hsps.majority_frameshift
         self.add_annotation('majority_frameshift', majority_frameshift)
@@ -340,7 +356,7 @@ class Contig():
         # the 5'-most closest relative's anchor HSP. We use some
         # partial currying to allow this to be done in a list
         # comphrension. 
-        f = lambda x: cr_ahsps.orf_overlaps_5prime(x, len(self))
+        f = lambda x: cr_ahsps.orf_overlaps_5prime(x, len(self.seq))
         overlap_candidates = [orf for orf in orf_candidates if f(orf)]
 
         if len(overlap_candidates) == 0:
@@ -376,12 +392,11 @@ class Contig():
         # getting the frame this way is necessary; there could be a
         # frameshift (majority frame is None then) and a stop codon
         frame = self.cr_ahsps.most_5prime.frame
-        l = len(self)
-
+    
         ahsps = self.relative_hsps.get_anchor_hsps()
         for relative, ahsps in ahsps:
             if frame < 0:
-                if self.orf.end < self.cr_ahsps.most_3prime.put_on_forward_strand(l).start:
+                if self.orf.end < self.cr_ahsps.most_3prime.put_on_forward_strand(len(self.seq)).start:
                     return True
             else:
                 if self.orf.end < self.cr_ahsps.most_3prime.start:

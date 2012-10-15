@@ -17,18 +17,18 @@ def indent(string, level=2, char=' '):
     return char*level + '\n'.join([char*level + line for line in s])
 
 def nested_attrgetter(attr_1, attr_2):
-        """
-        Like operator.attrgetter, but for nested objects like
-        AnchorHSPs.
-
-        This may look strange, but recall attrgetter returns a
-        function, so this is essentially currying.
-
-        Note that we use x[1], as this is fed in tuples of dict's
-        (key, values).
-        """
+    """
+    Like operator.attrgetter, but for nested objects like
+    AnchorHSPs.
+    
+    This may look strange, but recall attrgetter returns a
+    function, so this is essentially currying.
+    
+    Note that we use x[1], as this is fed in tuples of dict's
+    (key, values).
+    """
         
-        return lambda x: attrgetter(attr_1)(attrgetter(attr_2)(x[1]))
+    return lambda x: attrgetter(attr_1)(attrgetter(attr_2)(x[1]))
 
 class SeqRange(object):
     """
@@ -52,7 +52,8 @@ class SeqRange(object):
         self.seqname = seqname
         self.seqlength = seqlength
 
-    def __len__(self):
+    @property
+    def width(self):
         """
         The length; end should always be greater than or equal to
         start (equal in case of SNP), so we assert this first.
@@ -91,9 +92,9 @@ class SeqRange(object):
         if self.end is None:
             # missing end, the length is the start to the end of the
             # sequence.
-            if seqlength is None:
+            if self.seqlength is None:
                 return None
-            return seqlength - self.start
+            return self.seqlength - self.start
 
     def overlaps(self, other, allow_unbounded=True):
         """
@@ -148,7 +149,7 @@ class HSP(SeqRange):
     
     """
     
-    def __init__(self, e, identities, length, percent_identity, title,
+    def __init__(self, e_value, identities, length, percent_identity, title,
                  query_start, query_end, sbjct_start, sbjct_end, frame):
 
         strand = -1 if frame < 0 else 1
@@ -158,7 +159,7 @@ class HSP(SeqRange):
                                        strand=strand)
 
         self.strand = strand
-        self.e = e
+        self.e_value = e_value
         self.identities = identities
         self.length = length
         self.percent_identity = percent_identity
@@ -171,7 +172,7 @@ class HSP(SeqRange):
         info = (self.start, self.end,
                 self.sbjct_start, self.sbjct_end,
                 self.frame, round(self.percent_identity, 4),
-                round(self.e, 4))
+                round(self.e_value, 4))
         return "HSP(qs:%s, qe:%s, ss:%s, se:%s, f:%s, pe:%s, e:%s)" % info
 
     def __str__(self):
@@ -311,7 +312,7 @@ class RelativeHSPs():
     def __repr__(self):
         self.get_anchor_hsps()
         closest_rel, cr_ahsps = self.closest_relative_anchor_hsps()
-        info = (len(self), self._pretty_anchor_hsps([(closest_rel, cr_ahsps)]))
+        info = (self.width, self._pretty_anchor_hsps([(closest_rel, cr_ahsps)]))
         return "RelativeHSPs\n%s relatives\nAnchorHSPs:\n%s" % info
 
     def add_relative_hsp(self, relative, hsp):
@@ -337,6 +338,7 @@ class RelativeHSPs():
 
         filtered_relatives = defaultdict(list)
         for relative, hsps in self.relatives.items():
+
 
             filters = [(e_value, e_thresh)]
             # make a custom filter closure for this relative's range;
@@ -365,8 +367,22 @@ class RelativeHSPs():
         """
         return len(self.relatives)
 
+    def __delitem__(self):
+        raise TypeError("'RelativeHSPs' object does not support item deletion")
+
+    def __getitem__(self, rel):
+        return self.relatives[rel]
+
+    def __setitem__(self, rel, hsp):
+        msg = ("use add_relative_hsp() method to add relatives'"
+              " HSPs to 'RelativeHSPs' object")
+        raise TypeError(msg)
+
     @property
     def has_relatives(self):
+        """
+        Return whether there are any relatives.
+        """
         return len(self.relatives) > 0
 
     @property
@@ -427,7 +443,7 @@ class RelativeHSPs():
                 frame[counts.keys()[0]] += sum(counts.values())
 
         if len(frame):
-            majority_frame, count = frame.most_common(1)[0]
+            majority_frame, _ = frame.most_common(1)[0]
             return majority_frame
 
         return None
@@ -458,7 +474,7 @@ class RelativeHSPs():
         if not self.has_relatives:
             return None
     
-        return any([len(c.keys()) > 1 for r, c in self._frames.iteritems()])
+        return any([len(c.keys()) > 1 for _, c in self._frames.iteritems()])
 
     def get_anchor_hsps(self):
         """
@@ -622,12 +638,11 @@ class ORF():
         """
         if contig.__class__.__name__ != "Contig":
             raise TypeError("'contig' must be a Contig object")
-        end = self.end
         start = self.start
         if self.no_start:
             return None
         if self.frame < 0:
-            return contig.seq.reverse_complement()[start:end]
+            return contig.seq.reverse_complement()[:start]
         return contig.seq[:start]
 
     
@@ -638,13 +653,16 @@ class ORF():
         if contig.__class__.__name__ != "Contig":
             raise TypeError("'contig' must be a Contig object")
         end = self.end
-        start = self.start
         if self.no_stop:
             return None
         if self.frame < 0:
-            return contig.seq.reverse_complement()[start:end]
+            return contig.seq.reverse_complement()[end:]
         return contig.seq[end:]
 
-    def __len__(self):
-        return len(self.range)
+    def width(self):
+        """
+        Get the length of the ORF. 'width' comes from the idea that
+        this ORF is functionally a range on the contig.
+        """
+        return self.range.width
 

@@ -51,6 +51,7 @@ class Contig():
         self.record = record
         self.annotation = dict()
         self.hsps = SeqRanges()
+        self.has_relative = False
         
     @property
     def seq(self):
@@ -90,7 +91,7 @@ class Contig():
             # query_end. Ranges are require start < end.
             qstart = hsp.query_start
             qend = hsp.query_end
-            strand = "+" if hsp.frame[0] < 0 else "+"
+            strand = "-" if hsp.frame[0] < 0 else "+"
             assert(qstart < qend)
 
             nthsp = _HSP_object_to_Named_Tuple(hsp)
@@ -101,20 +102,64 @@ class Contig():
                                     'title':best_alignment.title,
                                     'hsp':nthsp})
             self.hsps.append(seqrng)
-            
+
+        self.has_relative = True
+
+    
     def most_5prime_hsp(self):
         """
         Get the 5'-most HSP or PFAM domain, handling the possibility
         the contig is in the reverse orientation.
+
+        Note that this is O(n). We could potentially add methods to
+        SeqRanges to make this faster, but this would depend on using
+        a tree of some sort during construction.
         """
+        if not self.has_relative:
+            return None
+
         pass
 
-    def majority_frame(self):
+    def count_frames(self, min_expect):
         """
-        Get the majority frame by looking at the ranges on the
-        contig. We could also break this down by relative.
+        Count the frames (by identities in that frame) of all HSPs,
+        for use with majority_frame() nad majority_frameshift()
+        methods.
+        """        
+        # filter SeqRange objects by whether they meet min e-value
+        # requirements
+        filtered_hsps = filter(lambda x: x['hsp'].expect <= min_expect, self.hsps)
+        
+        frames = Counter()
+        for hsp in filtered_hsps:
+            frames[hsp['frame']] += hsp['identities']
+        return frames
+        
+    def majority_frame(self, min_expect=10):
         """
-        pass
+        Get the majority frame by looking at relatives' HSPs on the
+        contig.
+        """
+        if not self.has_relative:
+            return None
+        frames = self.count_frames()
+        if len(frames):
+            majority_frame, _ = frames.most_common(1)[0]
+            return majority_frame
+        return None
 
-    def majority_frame(self):
-        pass
+    def majority_frameshift(self):
+        """
+        Return whether there's a majority frameshift by looking at
+        relatives' HSPs on the contig.
+        """
+        if not self.has_relative:
+            return None
+        frames = self.count_frames()
+        if len(frames):
+            return set(frames) > 1
+        return None
+
+    
+
+

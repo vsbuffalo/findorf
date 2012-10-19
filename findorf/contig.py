@@ -11,7 +11,7 @@ from operator import itemgetter
 from itertools import groupby
 
 # named tuples used to improve readability 
-AnchorHSPs = namedtuple('AnchorHSPs', ['most_5prime', 'most_3prime'])
+AnchorHSPs = namedtuple('AnchorHSPs', ['relative', 'most_5prime', 'most_3prime'])
 
 DEFAULT_MIN_EXPECT = 10
 
@@ -91,18 +91,18 @@ class Contig():
         best_alignment = blast_record.alignments[0]
         for hsp in best_alignment.hsps:
 
-            # Negative strand alignments have query_start >
-            # query_end. Ranges are require start < end.
-            qstart = hsp.query_start
-            qend = hsp.query_end
+            # Adjust BLAST's 1-based indexing to our 0-based indexing.
+            qstart = hsp.query_start - 1
+            qend = hsp.query_end - 1
             strand = "-" if hsp.frame[0] < 0 else "+"
-            assert(qstart < qend)
+            assert(qstart <= qend)
 
             data = _HSP_to_dict(hsp)
             data.update({"relative":relative, "title":best_alignment.title})
             seqrng = SeqRange(Range(qstart, qend),
                               seqname=self.record.id,
                               strand=strand,
+                              seqlength=len(self.record.seq),
                               data=data)
             self.hsps.append(seqrng)
 
@@ -126,14 +126,31 @@ class Contig():
         i = sorted(range(len(self.hsps)), key=lambda k: self.hsps.end[k], reverse=True)[0]
         j = sorted(range(len(self.hsps)), key=lambda k: self.hsps.start[k])[0]
 
-        if self.majority_frame(min_expect) < 0:
+        if self.get_strand(min_expect) == "-":
             # negative strand; 5'-most HSP is that with the largest
             # query end
-            return AnchorHSPs(self.hsps[i], self.hsps[j])
+            return AnchorHSPs(self.hsps[i]['relative'], self.hsps[i], self.hsps[j])
         else:
             # positive strand; 5-most HSP is that with the smallest
             # query start
-            return AnchorHSPs(self.hsps[j], self.hsps[i])
+            return AnchorHSPs(self.hsps[j]['relative'], self.hsps[j], self.hsps[i])
+
+    def get_strand(self, min_expect=DEFAULT_MIN_EXPECT):
+        """
+        Get a strand (+, -), a step we can do before guess frame.
+
+        We need strand to infer 5'-anchor HSPs, which we need if we
+        have a frameshift, so this must be found before frame.
+        """
+        if not self.has_relative or self.inconsistent_strand(min_expect):
+            return None
+
+        filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
+
+        strands = [h.strand for h in filtered_hsps]
+        # assert cardinality of strand set is 1
+        assert(len(set(strands)) == 1)
+        return strands[0]
 
     def count_frames(self, min_expect=DEFAULT_MIN_EXPECT):
         """
@@ -175,6 +192,26 @@ class Contig():
         if len(frames):
             return len(set(frames)) > 1
         return None
+
+    def inconsistent_strand(self, min_expect=DEFAULT_MIN_EXPECT):
+        """
+        In some cases, we may have a majority frameshift, but also
+        because the HSPs are on different strands. This is a very
+        degenerate case, and should be annotated as such.
+        """
+        filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
+        frames = [(h['relative'], h['frame'], h['identities']) for h in filtered_hsps]
+        frames = sorted(frames, key=itemgetter(0))
+        inconsistent_strand = Counter()
+        
+        for relative, hsps_info in groupby(frames, itemgetter(0)):
+            hsps_info = list(hsps_info)
+            frames = map(itemgetter(1), hsps_info)
+            strands = [f/abs(f) for f in frames]
+            
+            inconsistent_strand[len(set(strands)) > 1] += 1
+
+        return inconsistent_strand[True] >= inconsistent_strand        
 
     def majority_frameshift(self, min_expect=DEFAULT_MIN_EXPECT):
         """
@@ -234,14 +271,18 @@ class Contig():
         (compared to a threshold, `qs_thresh`) and the subject start
         position (`ss_thresh`). Starting late in the subject and early
         in the query probably means we're missing part of a protein.
+
+        If missing_5prime is True, then we also want to consider the
+        case that there is not start codon 5' of the 5'-most HSP --
+        this is a case where the start is 100% missing.
         
         """
 
         if not self.has_relative:
             return None
 
-        most_5prime, most_3prime = self.get_anchor_HSPs()
-
+        most_5prime_relative, most_5prime, most_3prime = self.get_anchor_HSPs(min_expect)
+        
         if most_5prime.strand == "-":
             missing = (most_5prime.start <= qs_thresh and
                        most_5prime['sbjct_start'] >= ss_thresh)
@@ -252,3 +293,57 @@ class Contig():
         return missing
     
         
+    def predict_orf(self, e_value=None, qs_thresh=16, ss_thresh=40,
+                    min_expect=DEFAULT_MIN_EXPECT):
+        """
+        Predict ORF based on one of two methods:
+
+        1. 5'-most beginning ORF that overlaps 5'-most HSP. This
+        procedure errors on the side of too much protein sequence.
+
+        2. ORF starting at the start codon 5' of the 5'-most HSP.
+
+        These are the core two methods for choosing an ORF in the case
+        when we:
+
+        - don't suspect missing 5'-end
+        - don't suspect a frameshift
+
+        """        
+        if not self.has_relatives or self.inconsistent_strand(min_expect):
+            return None
+
+        ## 0. Get strand and anchor HSPs.
+        strand = self.get_strand(min_expect)
+        most_5prime_relative, most_5prime, most_3prime = self.get_anchor_HSPs(min_expect)
+
+        ## 1. Try to infer frame
+        ## 1.a Look for frameshift
+        has_majority_frameshift = self.majority_frameshift(min_expect)
+        if has_majority_frameshift:
+            # Our frame is that of the 5'-most HSP
+            frame = most_5prime['frame']
+            assert({}[most_5prime.strand] == strand)
+        else:
+            ## 1.d Finally, infer frame in the vanilla case
+            frame = self.majority_frame(min_expect)
+
+        # assert our strand according to strand & frame are consistent
+        assert({"+":1, "-":-1}[strand] == frame/abs(frame))
+        
+        ## If the frame is negative, we must do a
+        ## coordinate transform of the anchor HSPs SeqRange objects so
+        ## that they are on the forward orientation (as ORF candidates
+        ## would be)
+        if frame < 0:
+            most_5prime, most_3prime = (most_5prime.forward_coordinate_transform(),
+                                        most_3prime.forward_coordinate_transform())
+
+        ## 3. Look for missing 5'-end
+        missing_5prime = self.missing_5prime(min_expect)
+        
+        ## 3. Prediction ORF.
+        
+        
+        ## 4. Internal stop codon check
+

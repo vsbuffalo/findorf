@@ -34,15 +34,12 @@ def get_codons(seq, frame):
     # remove the last string if not a full codon.
     return [(c, po, pfq) for c, po, pfq in tmp if len(c) == 3]
 
-def get_all_orfs(seqrecord, frame, in_reading_frame=False):
+def get_all_orfs(seqrecord, frame):
     """
     Generic ORF finder; it returns a list of all ORFs as they are
     found, given codons (a list if tuples in the form (codon,
     position)) from `get_codons`. This list is a list of SeqRange
     objects.
-
-    If in_reading_frame is True, it ignores looking for a start codon
-    first.
 
     Earlier versions did not allow for overlapping ORFs, since our
     approach was to always take the 5'-most start codon. However, now
@@ -64,47 +61,66 @@ def get_all_orfs(seqrecord, frame, in_reading_frame=False):
                   |-------------ORF1-------|
             |-----M---M---M----------------*----|
 
+    Save for annotating them differently, this function will not
+    ignore partial 5'-incomplete for 3'-incomplete cases. In other
+    words, we assume we are in an open reading frame from the
+    start. This allows us to enumerate every biologically possible
+    ORF.
+    
     """
     seq = seqrecord.seq
     seqname = seqrecord.id
     seqlength = len(seq)
 
     # initialize ORF collector, and starting positions
-    all_orfs = SeqRanges()
-    orf_start_pos = None
-    query_start_pos = None
+    all_orfs = SeqRanges() # for final ORFs
 
+    # to handle keeping many reading possible reading frame candidates
+    # open at once, we use a queue. Tuples maintain key data:
+    # (start orf position, start query position, whether had start codon)
+    orf_queue = list()
+
+    # get all codons in frame
     codons = get_codons(seq, frame)
     orf_frame = "+" if frame > 0 else "-"
+
+    # push case that we're in reading frame from start onto queue, but
+    # only if it's not a stop codon
+    codon, orf_pos, query_pos = codons[0]
+    if codon not in STOP_CODONS:
+        orf_queue.append((orf_pos, query_pos, False))
     
-    # Note that query_pos is forward strand.
     for codon, orf_pos, query_pos in codons:
         codon = codon.upper()
-        if codon in START_CODONS and not in_reading_frame:
-            in_reading_frame = True
-            orf_start_pos = orf_pos
-            query_start_pos = query_pos
+
+        if codon in START_CODONS:
+            orf_queue.append((orf_pos, query_pos, True))
             continue
-        if in_reading_frame and codon in STOP_CODONS:
-            # a full reading frame, unless we haven't hit any stop
-            # yet, then we're in the possible ORF from the start of
-            # the query to the end.
-            orf_data = {"no_start":query_start_pos is None, "no_stop":False}
+        if codon in STOP_CODONS:
+            # pop everything off queue and make it an ORF to add to
+            # the candidates list
+            while True:
+                try:
+                    orf_start_pos, query_start_pos, had_start = orf_queue.pop()
+                except IndexError:
+                    break
+                orf_data = {"no_start":not had_start, "no_stop":False}
+                orf = SeqRange(Range(query_start_pos, query_pos), seqname,
+                               orf_frame, seqlength=seqlength, data=orf_data)
+                all_orfs.append(orf)
+
+    # iteration complete. If there are still items in the ORF queue,
+    # pop them off and add them as incomplete.
+    if len(orf_queue) > 0:
+        while True:
+            try:
+                orf_start_pos, query_start_pos, had_start = orf_queue.pop()
+            except IndexError:
+                break
+            orf_data = {"no_start":not had_start, "no_stop":True}
             orf = SeqRange(Range(query_start_pos, query_pos), seqname,
                            orf_frame, seqlength=seqlength, data=orf_data)
             all_orfs.append(orf)
-            
-            # reset values
-            in_reading_frame = False
-            orf_start_pos = None
-            query_start_pos = None
-            
-    # add any partial ORFs, and mark as having no stop codon
-    if in_reading_frame:
-        orf_data = {"no_start":query_start_pos is None, "no_stop":True}
-        orf = SeqRange(Range(query_start_pos, query_pos), seqname,
-                       orf_frame, seqlength=seqlength, data=orf_data)
-        all_orfs.append(orf)
     return all_orfs
 
 def predict_orf(seq_record, frame, method="1st-M", in_frame=False):

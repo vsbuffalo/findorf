@@ -94,6 +94,7 @@ def get_all_orfs(seqrecord, frame):
         codon = codon.upper()
 
         if codon in START_CODONS:
+            #print "adding start codon '%s' pos %d to queue" % (codon, query_pos)
             orf_queue.append((orf_pos, query_pos, True))
             continue
         if codon in STOP_CODONS:
@@ -118,7 +119,7 @@ def get_all_orfs(seqrecord, frame):
             except IndexError:
                 break
             orf_data = {"no_start":not had_start, "no_stop":True}
-            orf = SeqRange(Range(query_start_pos, query_pos), seqname,
+            orf = SeqRange(Range(query_start_pos, seqlength-1), seqname,
                            orf_frame, seqlength=seqlength, data=orf_data)
             all_orfs.append(orf)
     return all_orfs

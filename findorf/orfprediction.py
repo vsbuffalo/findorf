@@ -88,7 +88,11 @@ def get_all_orfs(seqrecord, frame):
     # only if it's not a stop codon
     codon, orf_pos, query_pos = codons[0]
     if codon not in STOP_CODONS:
-        orf_queue.append((orf_pos, query_pos, False))
+        # note what we're adding here: query_pos is query position *in
+        # frame*. We're using 0, ensuring that this open-ended ORF
+        # will always have a start position of 0, *regardless* of
+        # frame (where it may start on the 2 base if frame=3, etc)
+        orf_queue.append((orf_pos, 0, False))
     
     for codon, orf_pos, query_pos in codons:
         codon = codon.upper()

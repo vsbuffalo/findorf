@@ -31,11 +31,13 @@ def test_get_all_orfs_case_generator():
                       start=[0, 12], end=[6, 17]))
     cases.append(dict(seq=SeqRecord(Seq("AAGCGGCGTAGGCGATGGCG"), "case with frame=3, mix"), frame=3,
                       start=[0, 14], end=[8, 19]))
+    cases.append(dict(seq=SeqRecord(Seq("ATGGCGGCGTAGGCGATGGCG"), "case with frame=1, duplicate ranges"), frame=1,
+                      start=[0, 0, 15], end=[9, 9, 20]))
 
     for case in cases:
         yield check_get_all_orfs, case['seq'], case['frame'], case['start'], case['end']
 
 def check_get_all_orfs(seq, frame, start, end):
     orfs = get_all_orfs(seq, frame)
-    assert_equal(sorted(orfs.start), sorted(start))
-    assert_equal(sorted(orfs.end), sorted(end))
+    assert_equal(orfs.start, start)
+    assert_equal(orfs.end, end)

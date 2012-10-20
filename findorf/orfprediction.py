@@ -5,6 +5,7 @@ e.g.: getting codons, ORFs, etc.
 Assume standard NCBI codon table.
 """
 
+from collections import deque
 from Bio.Data import CodonTable
 from Bio.Seq import Seq
 from BioRanges.lightweight import Range, SeqRange, SeqRanges
@@ -78,7 +79,7 @@ def get_all_orfs(seqrecord, frame):
     # to handle keeping many reading possible reading frame candidates
     # open at once, we use a queue. Tuples maintain key data:
     # (start orf position, start query position, whether had start codon)
-    orf_queue = list()
+    orf_queue = deque(list())
 
     # get all codons in frame
     codons = get_codons(seq, frame)
@@ -106,7 +107,7 @@ def get_all_orfs(seqrecord, frame):
             # the candidates list
             while True:
                 try:
-                    orf_start_pos, query_start_pos, had_start = orf_queue.pop()
+                    orf_start_pos, query_start_pos, had_start = orf_queue.popleft()
                 except IndexError:
                     break
                 orf_data = {"no_start":not had_start, "no_stop":False}

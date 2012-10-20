@@ -90,10 +90,10 @@ def get_all_orfs(seqrecord, frame):
     codon, orf_pos, query_pos = codons[0]
     if codon not in STOP_CODONS:
         # note what we're adding here: query_pos is query position *in
-        # frame*. We're using 0, ensuring that this open-ended ORF
-        # will always have a start position of 0, *regardless* of
-        # frame (where it may start on the 2 base if frame=3, etc)
-        orf_queue.append((orf_pos, 0, False))
+        # frame*. So even if the ORF is open-ended, we will still not
+        # start from the beginning of the sequence, but rather the
+        # beginning of the sequence in frame.
+        orf_queue.append((orf_pos, query_pos, False))
     
     for codon, orf_pos, query_pos in codons:
         codon = codon.upper()
@@ -111,7 +111,7 @@ def get_all_orfs(seqrecord, frame):
                 except IndexError:
                     break
                 orf_data = {"no_start":not had_start, "no_stop":False}
-                orf = SeqRange(Range(query_start_pos, query_pos), seqname,
+                orf = SeqRange(Range(query_start_pos, query_pos+2), seqname,
                                orf_frame, seqlength=seqlength, data=orf_data)
                 all_orfs.append(orf)
 
@@ -124,7 +124,7 @@ def get_all_orfs(seqrecord, frame):
             except IndexError:
                 break
             orf_data = {"no_start":not had_start, "no_stop":True}
-            orf = SeqRange(Range(query_start_pos, seqlength-1), seqname,
+            orf = SeqRange(Range(query_start_pos, query_pos+2), seqname,
                            orf_frame, seqlength=seqlength, data=orf_data)
             all_orfs.append(orf)
     return all_orfs

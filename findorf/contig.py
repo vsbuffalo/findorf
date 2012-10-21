@@ -5,10 +5,13 @@ it stores uses objects from BioPython directly.
 
 """
 
-from BioRanges.lightweight import Range, SeqRange, SeqRanges
+import pdb
 from collections import Counter, namedtuple
 from operator import itemgetter
 from itertools import groupby
+
+from BioRanges.lightweight import Range, SeqRange, SeqRanges
+from orfprediction import get_all_orfs
 
 # named tuples used to improve readability 
 AnchorHSPs = namedtuple('AnchorHSPs', ['relative', 'most_5prime', 'most_3prime'])
@@ -293,7 +296,7 @@ class Contig():
         return missing
     
         
-    def predict_orf(self, e_value=None, qs_thresh=16, ss_thresh=40,
+    def predict_orf(self, method='5prime-hsp', e_value=None, qs_thresh=16, ss_thresh=40,
                     min_expect=DEFAULT_MIN_EXPECT):
         """
         Predict ORF based on one of two methods:
@@ -310,8 +313,9 @@ class Contig():
         - don't suspect a frameshift
 
         """        
-        if not self.has_relatives or self.inconsistent_strand(min_expect):
+        if not self.has_relative or self.inconsistent_strand(min_expect):
             return None
+        filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
 
         ## 0. Get strand and anchor HSPs.
         strand = self.get_strand(min_expect)
@@ -341,9 +345,42 @@ class Contig():
 
         ## 3. Look for missing 5'-end
         missing_5prime = self.missing_5prime(min_expect)
-        
-        ## 3. Prediction ORF.
-        
-        
-        ## 4. Internal stop codon check
+
+        ## 4. Get all ORFs
+        orf_candidates = get_all_orfs(self.record, frame)
+        assert(len(orf_candidates) > 0) # we should always have the
+                                        # open ended option
+
+        ## 4.a If we don't have a missing 5'-end, remove candidates
+        ## that are missing start codon.
+        if missing_5prime:
+            no_starts = orf_candidates.getdata('no_start')
+            tmp = seqRanges()
+            for i, no_start in enumerate(no_start):
+                if not no_start:
+                    tmp.append(orf_candidates[i])
+            orf_candidates = tmp
+        pdb.set_trace()
+        ## 6. ORF Prediction: subset ORFs by those that overlap the
+        ## 5'-most HSP
+        overlapping_candidates = orf_candidates.subsetByOverlaps(most_5prime)
+        if len(overlapping_candidates):
+          ## 6.a Method-dependent ORF selection. Method (a): 5'-most
+          ## start codon.
+          if method == '5prime-most':
+              orf_i = range(len(overlapping_candidates))
+              orf_range_i = sorted(orf_i, key=lambda x: overlapping_candidates[x].start)[0]
+          elif method == '5prime-hsp':
+              # what overlaps the 5'-most hsp with the 3'-most start position?
+              five_prime_of_hsp = filter(lambda i: overlapping_candidates[i].start <= most_5prime.start,
+                                     range(overlapping_candidates))
+              five_prime_of_hsp.sort()
+              orf_range_i = five_prime_of_hsp[0]
+        else:
+            return None # TODO handle
+
+        ## 6. Internal stop codon check
+
+        return overlapping_candidates[orf_range_i]
+
 

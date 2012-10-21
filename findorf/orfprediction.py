@@ -60,6 +60,7 @@ def get_all_orfs(seqrecord, frame):
                           |-----ORF3-------|
                       |---------ORF2-------|
                   |-------------ORF1-------|
+            |-- open ended case -----------|
             |-----M---M---M----------------*----|
 
     Save for annotating them differently, this function will not
@@ -83,7 +84,6 @@ def get_all_orfs(seqrecord, frame):
 
     # get all codons in frame
     codons = get_codons(seq, frame)
-    orf_frame = "+" if frame > 0 else "-"
 
     # push case that we're in reading frame from start onto queue, but
     # only if it's not a stop codon
@@ -112,7 +112,7 @@ def get_all_orfs(seqrecord, frame):
                     break
                 orf_data = {"no_start":not had_start, "no_stop":False}
                 orf = SeqRange(Range(query_start_pos, query_pos+2), seqname,
-                               orf_frame, seqlength=seqlength, data=orf_data)
+                               "+", seqlength=seqlength, data=orf_data)
                 all_orfs.append(orf)
 
     # iteration complete. If there are still items in the ORF queue,
@@ -125,7 +125,7 @@ def get_all_orfs(seqrecord, frame):
                 break
             orf_data = {"no_start":not had_start, "no_stop":True}
             orf = SeqRange(Range(query_start_pos, query_pos+2), seqname,
-                           orf_frame, seqlength=seqlength, data=orf_data)
+                           "+", seqlength=seqlength, data=orf_data)
             all_orfs.append(orf)
     return all_orfs
 
@@ -139,7 +139,7 @@ def predict_orf(seq_record, frame, method="1st-M", in_frame=False):
 
      - 'conservative': Take the 5'-most HSP and use the M 5' of this.
     """
-
+ 
     if method == "1st-M":
         pass
     elif method == "conservative":

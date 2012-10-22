@@ -23,8 +23,12 @@ identity constraints (as integers out of 100), i.e.:
     
 """ % __version__
 
-from blast import join_blastx_results
 import argparse
+import cPickle
+
+from blast import join_blastx_results
+from orfprediction import predictall
+
 
 def _join_blastx_results(args):
     """
@@ -33,6 +37,24 @@ def _join_blastx_results(args):
     import.
     """
     join_blastx_results(args.ref, args.blastx, args.output)
+
+def _predict_all_orfs(args):
+    """
+    Private function that bridges args input to
+    orfprediction.predictall()
+    """
+    sys.stderr.write("[predict] loading contig objects...")
+    contig_objects = cPickle.load(open(args.input, 'rb'))
+    sys.stderr.write("\tdone.\n")
+
+    possible_output = {'protein':args.protein, 'orf':args.orf,
+                       'gtf':args.gtf, 'frameshift':args.frameshift,
+                       'stop':args.stop, 'no_relatives':args.no_relatives,
+                       'five_prime_utrs':args.five_prime_utrs,
+                       'three_prime_utrs':args.three_prime_utrs}
+    to_output = filter(lambda k: possible_output[k] is not None, possible_output)
+
+    predictall(contig_objects, args.evalue, args.method, to_output, args.verbose)
 
 def main():
     """
@@ -57,6 +79,49 @@ def main():
                                    "to BLASTX queries."))
 
     parser_join.set_defaults(func=_join_blastx_results)
+
+    ## predict arguments
+    parser_predict = subparsers.add_parser('predict', help="predict ORFs")
+    
+    parser_predict.add_argument('--input', type=str,
+                                default="joined_blastx_dbs.pkl",
+                                help=("the joined results of all BLASTX "
+                                      "files (Python pickle file; from "
+                                      "sub-command joined)"))
+    parser_predict.add_argument('--gtf', type=argparse.FileType('w'),
+                                default=None,
+                                help="filename of the GTF of ORF predictions")
+    parser_predict.add_argument('-e', '--e-value', type=float,
+                                default=10e-3,
+                                help=("e-value threshold (relative hit "
+                                      "only include if less than this)"))
+    parser_predict.add_argument('-v', '--verbose', action="store_true",
+                                default=False,
+                                help="Output a period every 1,000 contigs predicted")
+    parser_predict.add_argument('-o', '--orfs', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output ORFs")
+    parser_predict.add_argument('-p', '--protein', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output translated proteins")
+    parser_predict.add_argument('-F', '--frameshift', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output frameshifted ORFs")
+    parser_predict.add_argument('-s', '--stop', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output internal stop codon ORFs (but not frameshift)")
+    parser_predict.add_argument('-n', '--no-relatives', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output contigs without relatives")
+    parser_predict.add_argument('-3', '--three-prime-utrs', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output the 3'-UTRs, for disjoining")
+    parser_predict.add_argument('-5', '--five-prime-utrs', type=argparse.FileType('w'), 
+                                default=None,
+                                help="FASTA file to output the 5'-UTRs, for disjoining")
+
+    parser_predict.set_defaults(func=_predict_all_orfs)
+
 
     # Parse arguments and run the appropriate step
     args = parser.parse_args()

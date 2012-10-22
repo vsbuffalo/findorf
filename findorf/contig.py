@@ -3,6 +3,9 @@ contig.py contains the Contig class. This new version is a depature
 from the previous version in that (1) it relies upon BioRanges and (2)
 it stores uses objects from BioPython directly.
 
+Strange cases:
+ - k61_contig_13995
+
 """
 
 import pdb
@@ -360,27 +363,45 @@ class Contig():
                 if not no_start:
                     tmp.append(orf_candidates[i])
             orf_candidates = tmp
-        pdb.set_trace()
+
         ## 6. ORF Prediction: subset ORFs by those that overlap the
         ## 5'-most HSP
         overlapping_candidates = orf_candidates.subsetByOverlaps(most_5prime)
         if len(overlapping_candidates):
-          ## 6.a Method-dependent ORF selection. Method (a): 5'-most
-          ## start codon.
-          if method == '5prime-most':
-              orf_i = range(len(overlapping_candidates))
-              orf_range_i = sorted(orf_i, key=lambda x: overlapping_candidates[x].start)[0]
-          elif method == '5prime-hsp':
-              # what overlaps the 5'-most hsp with the 3'-most start position?
-              five_prime_of_hsp = filter(lambda i: overlapping_candidates[i].start <= most_5prime.start,
-                                     range(overlapping_candidates))
-              five_prime_of_hsp.sort()
-              orf_range_i = five_prime_of_hsp[0]
+            ## 6.a Method-dependent ORF selection. Method (a): 5'-most
+            ## start codon.
+            if method == '5prime-most':
+                orf_i = range(len(overlapping_candidates))
+                tmp = sorted(orf_i, key=lambda x: overlapping_candidates[x].start)
+                if len(tmp) > 0:
+                    orf_range_i = tmp[0]
+                else:
+                    return None          
+            elif method == '5prime-hsp':
+                # which of the overlapping candidates have a start
+                # position 5' of the most 5' HSP?
+                five_prime_of_hsp_i = filter(lambda i: overlapping_candidates[i].start <= most_5prime.start,
+                                             range(len(overlapping_candidates)))
+                # let's sort these by start position now
+                if len(five_prime_of_hsp_i) > 0:
+                    five_prime_of_hsp_i = sorted(five_prime_of_hsp_i,
+                                                 key=lambda i: overlapping_candidates[i].start)
+                    orf_range_i = five_prime_of_hsp_i[0]
+                else:
+                    # if no ORF candidates that overlap a 5' HSP have
+                    # a start position 5' of the anchor HSP, we take
+                    # the 5'-most ORF overlapping candidate and assert
+                    # that it's start position is 3' of the 5' HSP
+                    # start.
+                    orf_i = range(len(overlapping_candidates))
+                    tmp = sorted(orf_i, key=lambda x: overlapping_candidates[x].start)
+                    orf_range_i = tmp[0]
+                    assert(overlapping_candidates[orf_range_i].start > most_5prime.start)
+            else:
+                raise ValueError("method must be either '5prime-most' or '5prime-hsp'")
         else:
-            return None # TODO handle
+            # no candidates overlap the most 5prime HSP
+            return None
 
-        ## 6. Internal stop codon check
-
+        ## 6. Internal stop codon check TODO
         return overlapping_candidates[orf_range_i]
-
-

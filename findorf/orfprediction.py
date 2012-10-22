@@ -5,7 +5,7 @@ e.g.: getting codons, ORFs, etc.
 Assume standard NCBI codon table.
 """
 
-from collections import deque
+from collections import deque, Counter
 from Bio.Data import CodonTable
 from Bio.Seq import Seq
 from BioRanges.lightweight import Range, SeqRange, SeqRanges
@@ -14,6 +14,14 @@ CODON_TABLE = "Standard"
 CODON_TABLE = CodonTable.unambiguous_dna_by_name[CODON_TABLE]
 STOP_CODONS = set(CODON_TABLE.stop_codons)
 START_CODONS = set(["ATG"])
+
+# simple classes to mimic enum
+class ORFTypes:
+    partial_3prime, partial_5prime, full_length, none = range(4)
+
+class NoPredictReasons:
+    no_relative, inconsistent_strand, no_5prime_overlap, 
+
 
 def get_codons(seq, frame):
     """
@@ -129,20 +137,27 @@ def get_all_orfs(seqrecord, frame):
             all_orfs.append(orf)
     return all_orfs
 
-def predict_orf(seq_record, frame, method="1st-M", in_frame=False):
+def predictall(contigs, evalue, method, output_fields,
+               verbose=True):
     """
-    Prediction of ORF.
-
-    method options are '1st-M' or 'conservative'.
-
-     - '1st-M': Take the 5'-most M and use this
-
-     - 'conservative': Take the 5'-most HSP and use the M 5' of this.
+    Predict the ORF of a dictionary of contig objects.
     """
- 
-    if method == "1st-M":
-        pass
-    elif method == "conservative":
-        pass
-    else:
-        raise ValueError("method must be either '1st-M' or 'conservative'")
+    counter = Counter()
+    counter['total'] = 0
+
+    sys.stderr.write("[predict] predicting and annotating ORFs.\n")
+    for query_id, contig in contigs.iteritems():
+        # Predict ORF and update contig annotation
+        if verbose:
+            if counter['total'] % 1000 == 0:
+                sys.stderr.write("\t%d out of %d contigs processed\r"
+                                 % (counter['total'], len(all_contigs)))
+                sys.stderr.flush()
+
+        # predict the ORF. Output is a boolean we don't care about
+        # whether one has actually been predicted
+        _ = contig.predict_orf(args.e_value, pi_range_args)
+        counter['total'] += 1
+
+    for field in output_fields:
+        WRITERS[field](contigs)

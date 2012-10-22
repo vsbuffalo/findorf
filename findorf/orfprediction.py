@@ -20,7 +20,7 @@ class ORFTypes:
     partial_3prime, partial_5prime, full_length, none = range(4)
 
 class NoPredictReasons:
-    no_relative, inconsistent_strand, no_5prime_overlap, 
+    no_relative, inconsistent_strand, no_5prime_overlap = range(3)
 
 
 def get_codons(seq, frame):

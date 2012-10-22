@@ -26,17 +26,23 @@ identity constraints (as integers out of 100), i.e.:
 import argparse
 import cPickle
 
-from blast import join_blastx_results
+from hmmer import add_pfam_domain_hits
+from blast import add_blastx_results
 from orfprediction import predictall
 
 
-def _join_blastx_results(args):
+def _join_relative_results(args):
     """
     Private function that bridges args input to join_blastx_results so
     that the latter has a cleaner interface when used with module
-    import.
+    import. Also, add any PFAM/HMMER input.
     """
-    join_blastx_results(args.ref, args.blastx, args.output)
+    contigs = add_blastx_results(args.ref, args.blastx)
+    if args.domain_hits is not None:
+        add_pfam_domain_hits(contigs, args.domain_hits)
+    # dump the joined contigs
+    cPickle.dump(contigs, file=args.output)
+
 
 def _predict_all_orfs(args):
     """
@@ -74,11 +80,14 @@ def main():
                              default="joined_blastx_dbs.pkl",
                              help=("joined results of all the BLASTX "
                                    "results files (Python pickle file)"))
+    parser_join.add_argument('--domain-hits', type=argparse.FileType('r'),
+                             default=None,
+                             help="PFAM domain hits via HMMER")
     parser_join.add_argument('--ref', type=str, required=True,
                              help=("the FASTA reference that corresponds "
                                    "to BLASTX queries."))
 
-    parser_join.set_defaults(func=_join_blastx_results)
+    parser_join.set_defaults(func=_join_relative_results)
 
     ## predict arguments
     parser_predict = subparsers.add_parser('predict', help="predict ORFs")

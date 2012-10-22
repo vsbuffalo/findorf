@@ -15,6 +15,14 @@ have to specify columns.
 """
 import pdb
 import re
+from collections import namedtuple
+from BioRanges.lightweight import Range, SeqRange
+
+DomainHit = namedtuple("DomainHit", ["target_name", "query_name",
+                                     "accession", "qlen", "seq_evalue", "seq_score",
+                                     "seq_bias", "domain_num", "total_domains",
+                                     "domain_cevalue", "domain_ievalue",
+                                     "domain_score", "domain_bias"])
 
 HMMER_COLS = [
 "target_name",
@@ -23,15 +31,15 @@ HMMER_COLS = [
 "query_name",
 "accession",
 "qlen",
-"evalue_fullseq",
-"score_fullseq",
-"bias_fullseq",
-"num_domain",
-"total_domain",
-"cEvalue_domain",
-"iEvalue_domain",
-"score_domain",
-"bias_domain",
+"seq_evalue",
+"seq_score",
+"seq_bias",
+"domain_num",
+"total_domains",
+"domain_cevalue",
+"domain_ievalue",
+"domain_score",
+"domain_bias",
 "hmm_from",
 "hmm_to",
 "ali_from",
@@ -47,16 +55,15 @@ def make_hmmer_parser(hmmer_file):
     third row's column widths.
     """
     col_widths_values = list()
-    with open(hmmer_file) as f:
-        for i, line in enumerate(f):
-            if i == 1:
-                header = line.strip()
-            if i == 2:
-                assert line.startswith("#-")
-                # get max column width based on these delimiters
-                splits = re.findall(r"[ \#]+-+", line)
-                col_widths_values = map(len, splits)
-                break
+    for i, line in enumerate(hmmer_file):
+        if i == 1:
+            header = line.strip()
+        if i == 2:
+            assert line.startswith("#-")
+            # get max column width based on these delimiters
+            splits = re.findall(r"[ \#]+-+", line)
+            col_widths_values = map(len, splits)
+            break
     pos = 0
     widths = list()
     columns = dict()
@@ -72,16 +79,52 @@ def make_hmmer_parser(hmmer_file):
         
     def parser(file):
         lines = list()
-        with open(file) as f:
-            for line in f:
-                if line.startswith("#"):
-                    continue
-                row = dict()
-                for field, pos in columns.iteritems():
-                    start, end = pos
-                    row[field] = line[start:end].strip()
-                lines.append(row)
+        for line in file:
+            if line.startswith("#"):
+                continue
+            row = dict()
+            for field, pos in columns.iteritems():
+                start, end = pos
+                row[field] = line[start:end].strip()
+            lines.append(row)
         return lines
 
     return parser
 
+def add_pfam_domain_hits(contigs, domain_hits_file):
+    """
+    Parse a domain hits table (see below for reference) into
+    dictionary of named tuples and SeqRange objects.
+    
+    ftp://selab.janelia.org/pub/software/hmmer3/3.0/Userguide.pdf,
+    page 38
+    """
+
+    domain_hits = dict()
+
+    # make HMMER parser
+    hmmer_parser = make_hmmer_parser(domain_hits_file)
+    pfam_domains = hmmer_parser(domain_hits_file)
+    pfam_dict = dict()
+    for row in pfam_domains:
+        key = row.pop('query_name')
+        tmp = key.split("_")
+        query = '_'.join(tmp[:-1])
+        frame = int(tmp[-1])
+        strand = "-" if frame < 0 else "+"
+        seqlen = len(contigs[query].seq)
+        dh = DomainHit(row["target_name"], query,
+                       row["accession"], row["qlen"], row["seq_evalue"],
+                       row["seq_score"], row["seq_bias"], row["domain_num"],
+                       row["total_domains"], row["domain_cevalue"],
+                       row["domain_ievalue"], row["domain_score"],
+                       row["domain_bias"])
+        data = {"domain_hit":dh, "frame":frame}
+        start = int(row["ali_to"])
+        end = int(row["ali_from"])
+        if not start <= end:
+            pdb.set_trace()
+        seqrng = SeqRange(Range(start, end), seqname=query,
+                          strand=strand, seqlength=seqlen, data=data)
+
+        contigs[query].add_pfam(seqrng)

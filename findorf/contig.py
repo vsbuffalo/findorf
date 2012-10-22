@@ -61,6 +61,7 @@ class Contig():
         self.record = record
         self.annotation = dict()
         self.hsps = SeqRanges()
+        self.pfam_domains = SeqRanges()
         self.has_relative = False
         
     @property
@@ -297,7 +298,12 @@ class Contig():
             missing = qs <= qs_thresh and most_5prime['sbjct_start'] >= ss_thresh
 
         return missing
-    
+
+    def add_pfam(self, domain_hit_seqrange):
+        """
+        Add PFAM domain hit (from HMMER).
+        """
+        self.pfam_domains.append(domain_hit_seqrange)
         
     def predict_orf(self, method='5prime-hsp', e_value=None, qs_thresh=16, ss_thresh=40,
                     min_expect=DEFAULT_MIN_EXPECT):

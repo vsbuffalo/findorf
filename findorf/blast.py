@@ -63,7 +63,7 @@ def make_blast_args(args_str):
                          "'databases'")
     return dict(zip(keys, values))
 
-def join_blastx_results(ref, blastx, output):
+def add_blastx_results(ref, blastx):
     """
     Each BLAST XML result file contains different alignments, each
     with possibly multiple HSPs. The foreign key is the contig ID,
@@ -98,6 +98,4 @@ def join_blastx_results(ref, blastx, output):
 
         sys.stderr.write("done.\n")
 
-    # dump the joined contigs
-    cPickle.dump(contigs, file=output)
-
+    return contigs

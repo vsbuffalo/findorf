@@ -7,9 +7,39 @@ delimiters. This wouldn't be a problem, but the last column definitely
 contains spaces. Furthermore, is that a guarantee that domain doesn't
 have a space? If it does, each numeric column could be offset by one
 (silently!).
+
+Even more ridiculous is that if one tries to make a parser based on
+fixed widths, this still isn't sufficient to parse HMMER output. Why?
+Because the column headers are split across two rows. This is why we
+have to specify columns.
 """
 import pdb
 import re
+
+HMMER_COLS = [
+"target_name",
+"accession",
+"tlen",
+"query_name",
+"accession",
+"qlen",
+"evalue_fullseq",
+"score_fullseq",
+"bias_fullseq",
+"num_domain",
+"total_domain",
+"cEvalue_domain",
+"iEvalue_domain",
+"score_domain",
+"bias_domain",
+"hmm_from",
+"hmm_to",
+"ali_from",
+"ali_to",
+"env_from",
+"env_to",
+"acc",
+"description"]
 
 def make_hmmer_parser(hmmer_file):
     """
@@ -32,13 +62,12 @@ def make_hmmer_parser(hmmer_file):
     columns = dict()
     num_columns = len(col_widths_values)
     for i, width in enumerate(col_widths_values):
-        colname = header[pos:pos+width]
+        colname = HMMER_COLS[i]
         if i+1 == num_columns:
             end = None
         else:
             end = pos+width
-        assert(len(colname) > 0)
-        columns[colname.strip()] = (pos, end)
+        columns[colname] = (pos, end)
         pos += width
         
     def parser(file):
@@ -55,9 +84,4 @@ def make_hmmer_parser(hmmer_file):
         return lines
 
     return parser
-    
-if __name__ == "__main__":
-    import hmmer
-    test_file = "All6frames.PfamA.E1e-3.domE1.domtbl"
-    parser = hmmer.make_hmmer_parser(test_file)
-    parsed = parser(test_file)
+

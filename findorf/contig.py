@@ -364,7 +364,7 @@ class Contig():
         ## that are missing start codon.
         if missing_5prime:
             no_starts = orf_candidates.getdata('no_start')
-            tmp = seqRanges()
+            tmp = SeqRanges()
             for i, no_start in enumerate(no_start):
                 if not no_start:
                     tmp.append(orf_candidates[i])

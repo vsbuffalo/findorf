@@ -120,10 +120,9 @@ def add_pfam_domain_hits(contigs, domain_hits_file):
                        row["domain_ievalue"], row["domain_score"],
                        row["domain_bias"])
         data = {"domain_hit":dh, "frame":frame}
-        start = int(row["ali_to"])
-        end = int(row["ali_from"])
-        if not start <= end:
-            pdb.set_trace()
+        start = int(row["ali_from"])
+        end = int(row["ali_to"])
+        assert(start <= end)
         seqrng = SeqRange(Range(start, end), seqname=query,
                           strand=strand, seqlength=seqlen, data=data)
 

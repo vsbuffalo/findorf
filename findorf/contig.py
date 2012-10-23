@@ -63,6 +63,7 @@ class Contig():
         self.hsps = SeqRanges()
         self.pfam_domains = SeqRanges()
         self.has_relative = False
+        self.orf = None
         
     @property
     def seq(self):
@@ -128,6 +129,8 @@ class Contig():
             return None
 
         filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
+        if len(filtered_hsps) < 1:
+            return None
 
         # We get the outermost HSPs
         i = sorted(range(len(self.hsps)), key=lambda k: self.hsps.end[k], reverse=True)[0]
@@ -153,7 +156,9 @@ class Contig():
             return None
 
         filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
-
+        if len(filtered_hsps) < 1:
+            return None
+        
         strands = [h.strand for h in filtered_hsps]
         # assert cardinality of strand set is 1
         assert(len(set(strands)) == 1)
@@ -168,6 +173,8 @@ class Contig():
         # filter SeqRange objects by whether they meet min e-value
         # requirements
         filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
+        if len(filtered_hsps) < 1:
+            return None
         
         frames = Counter()
         for hsp in filtered_hsps:
@@ -207,19 +214,11 @@ class Contig():
         degenerate case, and should be annotated as such.
         """
         filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
-        frames = [(h['relative'], h['frame'], h['identities']) for h in filtered_hsps]
-        frames = sorted(frames, key=itemgetter(0))
-        inconsistent_strand = Counter()
+        if len(filtered_hsps) < 1:
+            return None
+
+        return len(set([seqrng["frame"] for seqrng in filtered_hsps])) > 1
         
-        for relative, hsps_info in groupby(frames, itemgetter(0)):
-            hsps_info = list(hsps_info)
-            frames = map(itemgetter(1), hsps_info)
-            strands = [f/abs(f) for f in frames]
-            
-            inconsistent_strand[len(set(strands)) > 1] += 1
-
-        return inconsistent_strand[True] >= inconsistent_strand        
-
     def majority_frameshift(self, min_expect=DEFAULT_MIN_EXPECT):
         """
         Return whether there's a majority frameshift by looking at
@@ -236,6 +235,9 @@ class Contig():
             return None
 
         filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
+        if len(filtered_hsps) < 1:
+            return None
+        
         frames = [(h['relative'], h['frame'], h['identities']) for h in filtered_hsps]
         frames = sorted(frames, key=itemgetter(0))
         frameshifts = Counter()
@@ -350,7 +352,13 @@ class Contig():
         """        
         if not self.has_relative or self.inconsistent_strand(min_expect):
             return None
-        
+
+        # even though every function does this, we do it here to
+        # return None if none pass thresholds.
+        filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
+        if len(filtered_hsps) < 1:
+            return None
+
         ## 0. Get strand and anchor HSPs.
         strand = self.get_strand(min_expect)
         most_5prime_relative, most_5prime, most_3prime = self.get_anchor_HSPs(min_expect)
@@ -361,7 +369,6 @@ class Contig():
         if has_majority_frameshift:
             # Our frame is that of the 5'-most HSP
             frame = most_5prime['frame']
-            assert({}[most_5prime.strand] == strand)
         else:
             ## 1.d Finally, infer frame in the vanilla case
             frame = self.majority_frame(min_expect)
@@ -390,8 +397,12 @@ class Contig():
 
         ## 4. Get all ORFs
         orf_candidates = get_all_orfs(self.record, frame)
-        assert(len(orf_candidates) > 0) # we should always have the
-                                        # open ended option
+        if len(orf_candidates) == 0:
+            # why would we have no ORF candidate at all? usually there
+            # should be the open-ended case. However, if a sequence's
+            # first codon is a stop codon and no start codons are
+            # found, there can be no ORF.
+            return None
 
         ## 4.a If we don't have a missing 5'-end, remove candidates
         ## that are missing start codon.
@@ -442,5 +453,8 @@ class Contig():
             # no candidates overlap the most 5prime HSP
             return None
 
-        ## 6. Internal stop codon check TODO
+        self.orf = overlapping_candidates[orf_range_i]
         return overlapping_candidates[orf_range_i]
+
+        ## 6. Internal stop codon check TODO
+    

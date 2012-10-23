@@ -43,7 +43,7 @@ def _join_relative_results(args):
         add_pfam_domain_hits(contigs, args.domain_hits)
     # dump the joined contigs
     cPickle.dump(contigs, file=args.output)
-
+    return contigs
 
 def _predict_all_orfs(args):
     """
@@ -64,6 +64,7 @@ def _predict_all_orfs(args):
     method = '5prime-most' if args.most_5prime else '5prime-hsp'
     predictall(contig_objects, args.evalue, method, args.use_pfam, to_output,
                args.query_start, args.subject_start, args.verbose)
+    return contig_objects
 
 def main():
     """
@@ -147,4 +148,5 @@ def main():
     return args.func(args)
 
 if __name__ == "__main__":
-    main()
+    # for interactive use
+    contigs = main()

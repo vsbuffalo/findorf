@@ -13,6 +13,13 @@ from collections import Counter, namedtuple
 from operator import itemgetter
 from itertools import groupby
 
+try:
+    from Bio import SeqIO
+    from Bio.Seq import Seq
+    from Bio.SeqRecord import SeqRecord
+except ImportError:
+    sys.exit("Cannot import BioPython modules; please install it.")
+
 from BioRanges.lightweight import Range, SeqRange, SeqRanges
 from orfprediction import get_all_orfs, ORFTypes
 
@@ -126,7 +133,7 @@ class Contig():
         Return a dictionary corresponding to the columns of a GTF
         file.
         """
-        orf_anno = {"orf_type":self.orf_type,
+        orf_anno = {"orf_type":self.orf_type.type,
                     "no_prediction_reason":self.orf_type.reason}
         anno = dict(self.annotation.items() + orf_anno.items())
         # a GTF's file's "group" column contains a merged set of
@@ -142,11 +149,11 @@ class Contig():
         Return a protein sequence.
         """
         if self.orf is not None:
-            seq = self.orf.sliceseq(str(self.seq))
+            seq = self.orf_seq
             # we get this from ORF so we don't have to re-look at min expect
-            frame = self.orf.getdata("frame")
+            frame = self.orf["frame"]
             desc = self.description + " translated from frame %s" % str(frame)
-            return SeqRecord(seq=seq.translate(), id=self.id,
+            return SeqRecord(seq=seq.seq.translate(), id=self.id,
                              description=self.description)
         return None
 
@@ -156,7 +163,10 @@ class Contig():
         Return the nucleotide sequence record
         """
         if self.orf is not None:
-            seq = self.orf.sliceseq(str(self.seq))
+            seq = self.seq
+            if self.orf['frame'] < 0:
+                seq = seq.reverse_complement()
+            seq = self.orf.sliceseq(seq)
             return SeqRecord(seq=seq, id=self.id)
         return None
 
@@ -252,18 +262,26 @@ class Contig():
         if len(filtered_hsps) < 1:
             return None
 
+        # life is easier if we turn these back into a
+        # SeqRange. Eventually, BioRanges.lightweight.SeqRanges should
+        # have a method for this.
+        tmp = SeqRanges()
+        for fhsp in filtered_hsps:
+            tmp.append(fhsp)
+        filtered_hsps = tmp
+
         # We get the outermost HSPs
-        i = sorted(range(len(self.hsps)), key=lambda k: self.hsps.end[k], reverse=True)[0]
-        j = sorted(range(len(self.hsps)), key=lambda k: self.hsps.start[k])[0]
+        i = sorted(range(len(filtered_hsps)), key=lambda k: filtered_hsps.end[k], reverse=True)[0]
+        j = sorted(range(len(filtered_hsps)), key=lambda k: filtered_hsps.start[k])[0]
 
         if self.get_strand(min_expect) == "-":
             # negative strand; 5'-most HSP is that with the largest
             # query end
-            return AnchorHSPs(self.hsps[i]['relative'], self.hsps[i], self.hsps[j])
+            return AnchorHSPs(filtered_hsps[i]['relative'], filtered_hsps[i], filtered_hsps[j])
         else:
             # positive strand; 5-most HSP is that with the smallest
             # query start
-            return AnchorHSPs(self.hsps[j]['relative'], self.hsps[j], self.hsps[i])
+            return AnchorHSPs(filtered_hsps[j]['relative'], filtered_hsps[j], filtered_hsps[i])
 
     def get_strand(self, min_expect=DEFAULT_MIN_EXPECT):
         """
@@ -337,7 +355,7 @@ class Contig():
         if len(filtered_hsps) < 1:
             return None
 
-        return len(set([seqrng["frame"] for seqrng in filtered_hsps])) > 1
+        return len(set([seqrng["frame"]/abs(seqrng["frame"]) for seqrng in filtered_hsps])) > 1
         
     def majority_frameshift(self, min_expect=DEFAULT_MIN_EXPECT):
         """
@@ -438,19 +456,19 @@ class Contig():
         PFAM domains found via HMMSCAN were in protein space.
         """
         if len(self.pfam_domains) == 0:
-            return False # no PFAM domains, so nothing more 5'
+            return None # no PFAM domains, so nothing more 5'
         if most_5prime_hsp.strand == "-":
             most_5prime_hsp = most_5prime_hsp.forward_coordinate_transform()
 
         # subset PFAM domain is on same frame
         pfam_frames = self.pfam_domains.getdata("frame")
-        pfam_same_frame = [seqrng for seqrng in self.pfam_domains if seqrng.frame == frame]
+        pfam_same_frame = [seqrng for seqrng in self.pfam_domains if seqrng['frame'] == frame]
 
         # take 5'-most PFAM domain. Note these are all on forward strand
-        most_5prime_pfam = sorted(pfam_same_frame, key=lambda x: x.start)[0]
+        most_5prime_pfams = sorted(pfam_same_frame, key=lambda x: x.start)
 
-        if most_5prime_pfam.start < most_5prime_hsp:
-            return most_5prime_pfam
+        if len(most_5prime_pfams) > 0 and most_5prime_pfams[0].start < most_5prime_hsp:
+            return most_5prime_pfams[0]
         return None
         
     def predict_orf(self, method='5prime-hsp', use_pfam=True,
@@ -503,7 +521,7 @@ class Contig():
 
         # assert our strand according to strand & frame are consistent
         numeric_strand = {"+":1, "-":-1}[strand]
-        assert(numeric_strand == frame/abs(frame))
+        assert(int(numeric_strand) == int(frame/abs(frame)))
         
         ## If the frame is negative, we must do a
         ## coordinate transform of the anchor HSPs SeqRange objects so
@@ -519,7 +537,7 @@ class Contig():
             # TODO annotate PFAM frameshifts
             if more_5prime_pfam is not None:
                 most_5prime = more_5prime_pfam
-            self.annotate["pfam_extended_5prime"] = more_5prime_pfam is not None
+            self.annotation["pfam_extended_5prime"] = more_5prime_pfam is not None
 
         ## 3. Look for missing 5'-end
         missing_5prime = self.missing_5prime(qs_thresh, ss_thresh, min_expect)
@@ -585,14 +603,19 @@ class Contig():
             # no candidates overlap the most 5prime HSP
             self.orf_type = ORFTypes(None, "no_overlap")
             return None
-
-        self.orf = overlapping_candidates[orf_range_i]
+        orf = overlapping_candidates[orf_range_i]
+        self.orf = orf
         self.orf["frame"] = frame
         
         # check for ORF type, and annotate
         self.orf_type = ORFTypes(self.orf)
-        
-        return overlapping_candidates[orf_range_i]
 
-        ## 6. Internal stop codon check TODO
+        ## 6. Internal stop codon check
+        self.annotation["internal_stop"] = most_3prime.start > orf.end
+
+        return orf
     
+if __name__ == "__main__":
+    import cPickle
+    a = cPickle.load(open("joined_blastx_dbs.pkl"))
+    bb = [x.predict_orf() for k, x in a.items()]

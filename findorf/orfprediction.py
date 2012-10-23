@@ -9,6 +9,7 @@ from collections import deque, Counter
 from Bio.Data import CodonTable
 from Bio.Seq import Seq
 from BioRanges.lightweight import Range, SeqRange, SeqRanges
+from output import WRITERS
 
 CODON_TABLE = "Standard"
 CODON_TABLE = CodonTable.unambiguous_dna_by_name[CODON_TABLE]
@@ -16,11 +17,25 @@ STOP_CODONS = set(CODON_TABLE.stop_codons)
 START_CODONS = set(["ATG"])
 
 # simple classes to mimic enum
-class ORFTypes:
-    partial_3prime, partial_5prime, full_length, none = range(4)
+class ORFTypes(object):
+    def __init__(self, seqrng, reason=None):
+        self.reason = None
+        if seqrng is None:
+            self.type = "none"
+            self.reason = reason
+            return
+        no_start = seqrng["no_start"]
+        no_stop = seqrng["no_stop"]
 
-class NoPredictReasons:
-    no_relative, inconsistent_strand, no_5prime_overlap = range(3)
+        if no_start and no_stop:
+            self.type = "partial"
+            return
+        elif no_start:
+            self.type = "partial_5prime"
+        elif no_stop:
+            self.type = "partial_3prime"
+        else:
+            self.type = "full_length"
 
 def get_codons(seq, frame):
     """
@@ -150,7 +165,7 @@ def predictall(contigs, evalue, method, use_pfam, output_fields, qs_thresh,
         if verbose:
             if counter['total'] % 1000 == 0:
                 sys.stderr.write("\t%d out of %d contigs processed\r"
-                                 % (counter['total'], len(all_contigs)))
+                                 % (counter['total'], len(contigs)))
                 sys.stderr.flush()
 
         # predict the ORF. Output is a boolean we don't care about
@@ -159,4 +174,4 @@ def predictall(contigs, evalue, method, use_pfam, output_fields, qs_thresh,
         counter['total'] += 1
 
     for field in output_fields:
-        WRITERS[field](contigs)
+        WRITERS[field](contigs, output_fields[field])

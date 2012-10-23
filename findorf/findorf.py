@@ -59,8 +59,9 @@ def _predict_all_orfs(args):
                        'stop':args.stop, 'no_relatives':args.no_relatives,
                        'five_prime_utrs':args.five_prime_utrs,
                        'three_prime_utrs':args.three_prime_utrs}
-    to_output = filter(lambda k: possible_output[k] is not None, possible_output)
-
+    output_keys = filter(lambda k: possible_output[k] is not None, possible_output)
+    to_output = dict([(k, possible_output[k]) for k in output_keys])
+    
     method = '5prime-most' if args.most_5prime else '5prime-hsp'
     predictall(contig_objects, args.evalue, method, args.use_pfam, to_output,
                args.query_start, args.subject_start, args.verbose)

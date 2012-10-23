@@ -14,12 +14,21 @@ from operator import itemgetter
 from itertools import groupby
 
 from BioRanges.lightweight import Range, SeqRange, SeqRanges
-from orfprediction import get_all_orfs
+from orfprediction import get_all_orfs, ORFTypes
 
 # named tuples used to improve readability 
 AnchorHSPs = namedtuple('AnchorHSPs', ['relative', 'most_5prime', 'most_3prime'])
 
 DEFAULT_MIN_EXPECT = 10
+ANNOTATION_FIELDS = ["most_5prime_relative", # string
+                     "pfam_extended_5prime", # boolean
+                     "num_orf_candidates", # integer
+                     "contig_len", # integer
+                     "num_relatives", # integer
+                     "majority_frameshift", # boolean
+                     "internal_stop", # boolean
+                     "distant_start"] # boolean
+
 
 def _HSP_to_dict(hsp):
     """
@@ -59,11 +68,13 @@ class Contig():
 
     def __init__(self, record):
         self.record = record
-        self.annotation = dict()
+        self.annotation = dict().fromkeys(ANNOTATION_FIELDS)
+        self.annotation["contig_len"] = len(self.record.seq)
         self.hsps = SeqRanges()
         self.pfam_domains = SeqRanges()
         self.has_relative = False
         self.orf = None
+        self.orf_type = None
         
     @property
     def seq(self):
@@ -71,6 +82,115 @@ class Contig():
         Return the sequence of the contig.
         """
         return self.record.seq
+    
+    def gff_dict(self):
+        """
+        Return a dictionary of some key attribute's values,
+        corresponding to a GFF file's columns.
+        
+        Note that GFFs are 1-indexed, so we add one to positions.
+        """
+        out = dict()
+        out["seqname"] = self.id
+        out["source"] = "findorf"
+        out["feature"] = "predicted_orf"
+        # we increment the start because GTF is 1-indexed, but not for
+        # the end, since we want the ORF to (but not including) the
+        # stop codon.
+
+        if self.orf is not None:
+            out["start"] = self.orf.start + 1
+            out["end"] = self.orf.end + 1
+        else:
+            out["start"] = "."
+            out["end"] = "."
+            
+        out["score"] = "."
+
+        maj_frame = self.orf['frame'] if self.orf is not None else None
+        if maj_frame is not None:
+            out["strand"] = maj_frame/abs(maj_frame)
+        else:
+            out["strand"] = "."
+            
+        if maj_frame is not None:
+            # GFF uses frames in [0, 2]
+            out["frame"] = abs(maj_frame) - 1
+        else:
+            out["frame"] = "."
+            out["group"] = "."
+        return out
+        
+    def gtf_dict(self):
+        """
+        Return a dictionary corresponding to the columns of a GTF
+        file.
+        """
+        orf_anno = {"orf_type":self.orf_type,
+                    "no_prediction_reason":self.orf_type.reason}
+        anno = dict(self.annotation.items() + orf_anno.items())
+        # a GTF's file's "group" column contains a merged set of
+        # attributes, which in ContigSequence's case are those below
+        group = ";".join(["%s %s" % (k, v) for k, v in anno.items()])
+        out = self.gff_dict()
+        out["group"] = group
+        return out
+
+    @property
+    def protein(self):
+        """
+        Return a protein sequence.
+        """
+        if self.orf is not None:
+            seq = self.orf.sliceseq(str(self.seq))
+            # we get this from ORF so we don't have to re-look at min expect
+            frame = self.orf.getdata("frame")
+            desc = self.description + " translated from frame %s" % str(frame)
+            return SeqRecord(seq=seq.translate(), id=self.id,
+                             description=self.description)
+        return None
+
+    @property
+    def orf_seq(self):
+        """
+        Return the nucleotide sequence record
+        """
+        if self.orf is not None:
+            seq = self.orf.sliceseq(str(self.seq))
+            return SeqRecord(seq=seq, id=self.id)
+        return None
+
+    def five_prime_utr(self):
+        """
+        Return the 5'-UTR sequences of contigs with ORFS (full ORFs
+        and partials).
+        """
+        if self.orf is None:
+            return None
+
+        # handle non-likely-pseudogene case
+        is_likely_pseudogene = (self.annotation['internal_stop'] and
+                                not self.annotation['majority_frameshift'])
+        if not is_likely_pseudogene:
+            pass
+        else:
+            return None
+        
+    def three_prime_utr(self):
+        """
+        Return the 3'-UTR sequences of contigs with ORFs (full ORFs
+        and partials).
+        """
+        if self.orf is None:
+            return None
+
+        # handle non-likely-pseudogene case
+        is_likely_pseudogene = (self.annotation['internal_stop'] and
+                                not self.annotation['majority_frameshift'])
+        if not is_likely_pseudogene:
+            pass
+        else:
+            return None
 
     @property
     def id(self):
@@ -350,22 +470,30 @@ class Contig():
         - don't suspect a frameshift
 
         """        
-        if not self.has_relative or self.inconsistent_strand(min_expect):
+        if not self.has_relative:
+            self.orf_type = ORFTypes(None, "no_relative")
+            return None
+        if self.inconsistent_strand(min_expect):
+            self.orf_type = ORFTypes(None, "inconsistent_strand")
             return None
 
         # even though every function does this, we do it here to
         # return None if none pass thresholds.
         filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
         if len(filtered_hsps) < 1:
+            self.orf_type = ORFTypes(None, "none_passed_expect_thresh")
             return None
+        self.annotation["num_relatives"] = len(set([s['relative'] for s in filtered_hsps]))
 
         ## 0. Get strand and anchor HSPs.
         strand = self.get_strand(min_expect)
         most_5prime_relative, most_5prime, most_3prime = self.get_anchor_HSPs(min_expect)
+        self.annotation['most_5prime_relative'] = most_5prime_relative
 
         ## 1. Try to infer frame
         ## 1.a Look for frameshift
         has_majority_frameshift = self.majority_frameshift(min_expect)
+        self.annotation["majority_frameshift"] = has_majority_frameshift
         if has_majority_frameshift:
             # Our frame is that of the 5'-most HSP
             frame = most_5prime['frame']
@@ -391,17 +519,23 @@ class Contig():
             # TODO annotate PFAM frameshifts
             if more_5prime_pfam is not None:
                 most_5prime = more_5prime_pfam
+            self.annotate["pfam_extended_5prime"] = more_5prime_pfam is not None
 
         ## 3. Look for missing 5'-end
         missing_5prime = self.missing_5prime(qs_thresh, ss_thresh, min_expect)
-
+        if missing_5prime:
+            self.annotation
+        self.annotation["distant_start"] = missing_5prime
+            
         ## 4. Get all ORFs
         orf_candidates = get_all_orfs(self.record, frame)
+        self.annotation["num_orf_candidates"] = len(orf_candidates)
         if len(orf_candidates) == 0:
             # why would we have no ORF candidate at all? usually there
             # should be the open-ended case. However, if a sequence's
             # first codon is a stop codon and no start codons are
             # found, there can be no ORF.
+            self.orf_type = ORFTypes(None, "no_orf_candidates")
             return None
 
         ## 4.a If we don't have a missing 5'-end, remove candidates
@@ -423,10 +557,8 @@ class Contig():
             if method == '5prime-most':
                 orf_i = range(len(overlapping_candidates))
                 tmp = sorted(orf_i, key=lambda x: overlapping_candidates[x].start)
-                if len(tmp) > 0:
-                    orf_range_i = tmp[0]
-                else:
-                    return None          
+                assert(len(tmp) > 0)
+                orf_range_i = tmp[0]
             elif method == '5prime-hsp':
                 # which of the overlapping candidates have a start
                 # position 5' of the most 5' HSP?
@@ -451,9 +583,15 @@ class Contig():
                 raise ValueError("method must be either '5prime-most' or '5prime-hsp'")
         else:
             # no candidates overlap the most 5prime HSP
+            self.orf_type = ORFTypes(None, "no_overlap")
             return None
 
         self.orf = overlapping_candidates[orf_range_i]
+        self.orf["frame"] = frame
+        
+        # check for ORF type, and annotate
+        self.orf_type = ORFTypes(self.orf)
+        
         return overlapping_candidates[orf_range_i]
 
         ## 6. Internal stop codon check TODO

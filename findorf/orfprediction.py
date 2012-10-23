@@ -4,7 +4,7 @@ e.g.: getting codons, ORFs, etc.
 
 Assume standard NCBI codon table.
 """
-
+import sys
 from collections import deque, Counter
 from Bio.Data import CodonTable
 from Bio.Seq import Seq
@@ -21,7 +21,6 @@ class ORFTypes:
 
 class NoPredictReasons:
     no_relative, inconsistent_strand, no_5prime_overlap = range(3)
-
 
 def get_codons(seq, frame):
     """
@@ -137,8 +136,8 @@ def get_all_orfs(seqrecord, frame):
             all_orfs.append(orf)
     return all_orfs
 
-def predictall(contigs, evalue, method, output_fields,
-               verbose=True):
+def predictall(contigs, evalue, method, use_pfam, output_fields, qs_thresh,
+               ss_thresh, verbose=True):
     """
     Predict the ORF of a dictionary of contig objects.
     """
@@ -156,7 +155,7 @@ def predictall(contigs, evalue, method, output_fields,
 
         # predict the ORF. Output is a boolean we don't care about
         # whether one has actually been predicted
-        _ = contig.predict_orf(args.e_value, pi_range_args)
+        _ = contig.predict_orf(method, use_pfam, qs_thresh, ss_thresh, evalue)
         counter['total'] += 1
 
     for field in output_fields:

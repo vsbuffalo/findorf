@@ -22,7 +22,7 @@ DomainHit = namedtuple("DomainHit", ["target_name", "query_name",
                                      "accession", "qlen", "seq_evalue", "seq_score",
                                      "seq_bias", "domain_num", "total_domains",
                                      "domain_cevalue", "domain_ievalue",
-                                     "domain_score", "domain_bias"])
+                                     "domain_score", "domain_bias", "ali_from", "ali_to"])
 
 HMMER_COLS = [
 "target_name",
@@ -98,6 +98,42 @@ def add_pfam_domain_hits(contigs, domain_hits_file):
     
     ftp://selab.janelia.org/pub/software/hmmer3/3.0/Userguide.pdf,
     page 38
+
+    Converting from amino acid (1-indexed) to 0-indexed nucleotide
+    space:
+
+    DF in +3 frame, amino acid 3, reported as position 3.
+
+    zi_frame = zero-indexed frame
+
+    npos = 3*(aapos) - 3 + abs(zi_frame)
+
+                 aapos
+                  |
+     prot   1--2--3--4--5--6--7--8-
+            |     |
+     nucl |------------------------|
+          0       |
+                  8
+
+    frame: 2
+                      aapos
+                       |
+     prot  1--2--3--4--5--6--7--8-
+           |           |
+     nucl |------------------------|
+          0            |
+                       13
+
+    frame: 1
+    
+         aapos
+          |                    
+    prot  1--2--3--4--5--6--7--8-
+          |    
+     nucl |------------------------|
+          0    
+                                
     """
 
     domain_hits = dict()
@@ -118,12 +154,12 @@ def add_pfam_domain_hits(contigs, domain_hits_file):
                        row["seq_score"], row["seq_bias"], row["domain_num"],
                        row["total_domains"], row["domain_cevalue"],
                        row["domain_ievalue"], row["domain_score"],
-                       row["domain_bias"])
+                       row["domain_bias"], row["ali_from"], row["ali_to"])
         data = {"domain_hit":dh, "frame":frame}
-        start = int(row["ali_from"])
-        end = int(row["ali_to"])
+        start = (abs(frame) - 1) + 3*int(row["ali_from"]) - 3
+        end = (abs(frame) - 1) + 3*int(row["ali_to"]) - 3
         assert(start <= end)
         seqrng = SeqRange(Range(start, end), seqname=query,
-                          strand=strand, seqlength=seqlen, data=data)
-
+                          strand="+", seqlength=seqlen, data=data)
         contigs[query].add_pfam(seqrng)
+        

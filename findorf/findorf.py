@@ -23,6 +23,7 @@ identity constraints (as integers out of 100), i.e.:
     
 """ % __version__
 
+import sys
 import argparse
 import cPickle
 
@@ -53,14 +54,16 @@ def _predict_all_orfs(args):
     contig_objects = cPickle.load(open(args.input, 'rb'))
     sys.stderr.write("\tdone.\n")
 
-    possible_output = {'protein':args.protein, 'orf':args.orf,
+    possible_output = {'protein':args.protein, 'orf':args.orfs,
                        'gtf':args.gtf, 'frameshift':args.frameshift,
                        'stop':args.stop, 'no_relatives':args.no_relatives,
                        'five_prime_utrs':args.five_prime_utrs,
                        'three_prime_utrs':args.three_prime_utrs}
     to_output = filter(lambda k: possible_output[k] is not None, possible_output)
 
-    predictall(contig_objects, args.evalue, args.method, to_output, args.verbose)
+    method = '5prime-most' if args.most_5prime else '5prime-hsp'
+    predictall(contig_objects, args.evalue, method, args.use_pfam, to_output,
+               args.query_start, args.subject_start, args.verbose)
 
 def main():
     """
@@ -100,8 +103,8 @@ def main():
     parser_predict.add_argument('--gtf', type=argparse.FileType('w'),
                                 default=None,
                                 help="filename of the GTF of ORF predictions")
-    parser_predict.add_argument('-e', '--e-value', type=float,
-                                default=10e-3,
+    parser_predict.add_argument('-e', '--evalue', type=float,
+                                default=10e-5,
                                 help=("e-value threshold (relative hit "
                                       "only include if less than this)"))
     parser_predict.add_argument('-v', '--verbose', action="store_true",
@@ -128,7 +131,14 @@ def main():
     parser_predict.add_argument('-5', '--five-prime-utrs', type=argparse.FileType('w'), 
                                 default=None,
                                 help="FASTA file to output the 5'-UTRs, for disjoining")
-
+    parser_predict.add_argument('-u', '--use-pfam', action="store_true", default=False,
+                                help="Use PFAM domains if they are available")
+    parser_predict.add_argument('-q', '--query-start', default=16, type=int,
+                                help="query start parameter for detecting missing 5'-end")
+    parser_predict.add_argument('-m', '--most-5prime', default=False, action="store_true",
+                                help="always use most 5' start codon")
+    parser_predict.add_argument('-t', '--subject-start', default=40, type=int,
+                                help="subject start parameter for detecting missing 5'-end")
     parser_predict.set_defaults(func=_predict_all_orfs)
 
 

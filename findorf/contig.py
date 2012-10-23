@@ -301,12 +301,38 @@ class Contig():
 
     def add_pfam(self, domain_hit_seqrange):
         """
-        Add PFAM domain hit (from HMMER).
+        Add PFAM domain hit (from HMMER). Note that all of the
+        coordinate conversion is done via add_pfam_domain_hits()
+        function in the hmmer module.
         """
         self.pfam_domains.append(domain_hit_seqrange)
+
+    def more_5prime_pfam_domain(self, most_5prime_hsp, frame, min_expect=DEFAULT_MIN_EXPECT):
+        """
+        Return PFAM domain more 5' prime of supplied SeqRange object
+        (which should be the 5' anchor HSP), or None of if there is none.
+
+        Note that all PFAM domains are on the positive strand, since
+        PFAM domains found via HMMSCAN were in protein space.
+        """
+        if len(self.pfam_domains) == 0:
+            return False # no PFAM domains, so nothing more 5'
+        if most_5prime_hsp.strand == "-":
+            most_5prime_hsp = most_5prime_hsp.forward_coordinate_transform()
+
+        # subset PFAM domain is on same frame
+        pfam_frames = self.pfam_domains.getdata("frame")
+        pfam_same_frame = [seqrng for seqrng in self.pfam_domains if seqrng.frame == frame]
+
+        # take 5'-most PFAM domain. Note these are all on forward strand
+        most_5prime_pfam = sorted(pfam_same_frame, key=lambda x: x.start)[0]
+
+        if most_5prime_pfam.start < most_5prime_hsp:
+            return most_5prime_pfam
+        return None
         
-    def predict_orf(self, method='5prime-hsp', e_value=None, qs_thresh=16, ss_thresh=40,
-                    min_expect=DEFAULT_MIN_EXPECT):
+    def predict_orf(self, method='5prime-hsp', use_pfam=True,
+                    qs_thresh=16, ss_thresh=40, min_expect=DEFAULT_MIN_EXPECT):
         """
         Predict ORF based on one of two methods:
 
@@ -324,8 +350,7 @@ class Contig():
         """        
         if not self.has_relative or self.inconsistent_strand(min_expect):
             return None
-        filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
-
+        
         ## 0. Get strand and anchor HSPs.
         strand = self.get_strand(min_expect)
         most_5prime_relative, most_5prime, most_3prime = self.get_anchor_HSPs(min_expect)
@@ -342,7 +367,8 @@ class Contig():
             frame = self.majority_frame(min_expect)
 
         # assert our strand according to strand & frame are consistent
-        assert({"+":1, "-":-1}[strand] == frame/abs(frame))
+        numeric_strand = {"+":1, "-":-1}[strand]
+        assert(numeric_strand == frame/abs(frame))
         
         ## If the frame is negative, we must do a
         ## coordinate transform of the anchor HSPs SeqRange objects so
@@ -352,8 +378,15 @@ class Contig():
             most_5prime, most_3prime = (most_5prime.forward_coordinate_transform(),
                                         most_3prime.forward_coordinate_transform())
 
+        ## Check for PFAM frames, if necessary
+        if use_pfam:
+            more_5prime_pfam = self.more_5prime_pfam_domain(most_5prime, frame)
+            # TODO annotate PFAM frameshifts
+            if more_5prime_pfam is not None:
+                most_5prime = more_5prime_pfam
+
         ## 3. Look for missing 5'-end
-        missing_5prime = self.missing_5prime(min_expect)
+        missing_5prime = self.missing_5prime(qs_thresh, ss_thresh, min_expect)
 
         ## 4. Get all ORFs
         orf_candidates = get_all_orfs(self.record, frame)
@@ -365,7 +398,7 @@ class Contig():
         if missing_5prime:
             no_starts = orf_candidates.getdata('no_start')
             tmp = SeqRanges()
-            for i, no_start in enumerate(no_start):
+            for i, no_start in enumerate(no_starts):
                 if not no_start:
                     tmp.append(orf_candidates[i])
             orf_candidates = tmp

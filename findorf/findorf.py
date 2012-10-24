@@ -54,7 +54,7 @@ def _predict_all_orfs(args):
     contig_objects = cPickle.load(open(args.input, 'rb'))
     sys.stderr.write("\tdone.\n")
 
-    possible_output = {'protein':args.protein, 'orf':args.orfs,
+    possible_output = {'protein':args.protein, 'orf':args.orf,
                        'gtf':args.gtf, 'frameshift':args.frameshift,
                        'stop':args.stop, 'no_relatives':args.no_relatives,
                        'five_prime_utrs':args.five_prime_utrs,
@@ -112,7 +112,7 @@ def main():
     parser_predict.add_argument('-v', '--verbose', action="store_true",
                                 default=False,
                                 help="Output a period every 1,000 contigs predicted")
-    parser_predict.add_argument('-o', '--orfs', type=argparse.FileType('w'), 
+    parser_predict.add_argument('-o', '--orf', type=argparse.FileType('w'), 
                                 default=None,
                                 help="FASTA file to output ORFs")
     parser_predict.add_argument('-p', '--protein', type=argparse.FileType('w'), 
@@ -137,10 +137,10 @@ def main():
                                 help="Use PFAM domains if they are available")
     parser_predict.add_argument('-q', '--query-start', default=16, type=int,
                                 help="query start parameter for detecting missing 5'-end")
-    parser_predict.add_argument('-m', '--most-5prime', default=False, action="store_true",
-                                help="always use most 5' start codon")
     parser_predict.add_argument('-t', '--subject-start', default=40, type=int,
                                 help="subject start parameter for detecting missing 5'-end")
+    parser_predict.add_argument('-m', '--most-5prime', default=False, action="store_true",
+                                help="always use most 5' start codon")
     parser_predict.set_defaults(func=_predict_all_orfs)
 
 

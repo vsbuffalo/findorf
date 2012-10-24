@@ -17,7 +17,7 @@ GTF_FIELDS = ("seqname", "source", "feature", "start",
 
 def protein_writer(contigs, file):
     sys.stderr.write("[predict] writing protein sequences...")
-    proteins = filter(lambda x: x.protein is not None, contigs.values())
+    proteins = [x.protein for x in contigs.values() if x.protein is not None]
     SeqIO.write(proteins, file, "fasta")
     file.close()
     sys.stderr.write("\tdone.\n")

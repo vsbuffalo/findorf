@@ -81,6 +81,7 @@ class Contig():
         self.pfam_domains = SeqRanges()
         self.has_relative = False
         self.orf = None
+        self.orf_candidates = None
         self.orf_type = None
         
     @property
@@ -467,7 +468,7 @@ class Contig():
         # take 5'-most PFAM domain. Note these are all on forward strand
         most_5prime_pfams = sorted(pfam_same_frame, key=lambda x: x.start)
 
-        if len(most_5prime_pfams) > 0 and most_5prime_pfams[0].start < most_5prime_hsp:
+        if len(most_5prime_pfams) > 0 and most_5prime_pfams[0].start < most_5prime_hsp.start:
             return most_5prime_pfams[0]
         return None
         
@@ -534,7 +535,7 @@ class Contig():
         ## Check for PFAM frames, if necessary
         if use_pfam:
             more_5prime_pfam = self.more_5prime_pfam_domain(most_5prime, frame)
-            # TODO annotate PFAM frameshifts
+            # TOADD annotate PFAM frameshifts
             if more_5prime_pfam is not None:
                 most_5prime = more_5prime_pfam
             self.annotation["pfam_extended_5prime"] = more_5prime_pfam is not None
@@ -547,6 +548,7 @@ class Contig():
             
         ## 4. Get all ORFs
         orf_candidates = get_all_orfs(self.record, frame)
+        self.orf_candidates = orf_candidates
         self.annotation["num_orf_candidates"] = len(orf_candidates)
         if len(orf_candidates) == 0:
             # why would we have no ORF candidate at all? usually there
@@ -582,10 +584,12 @@ class Contig():
                 # position 5' of the most 5' HSP?
                 five_prime_of_hsp_i = filter(lambda i: overlapping_candidates[i].start <= most_5prime.start,
                                              range(len(overlapping_candidates)))
-                # let's sort these by start position now
+                # let's sort these by start position now, reversing so
+                # that the latest ORF candidate that overlaps is chosen
                 if len(five_prime_of_hsp_i) > 0:
                     five_prime_of_hsp_i = sorted(five_prime_of_hsp_i,
-                                                 key=lambda i: overlapping_candidates[i].start)
+                                                 key=lambda i: overlapping_candidates[i].start,
+                                                 reverse=True)
                     orf_range_i = five_prime_of_hsp_i[0]
                 else:
                     # if no ORF candidates that overlap a 5' HSP have

@@ -57,13 +57,13 @@ def _predict_all_orfs(args):
     possible_output = {'protein':args.protein, 'orf':args.orf,
                        'gtf':args.gtf, 'frameshift':args.frameshift,
                        'stop':args.stop, 'no_relatives':args.no_relatives,
-                       'five_prime_utrs':args.five_prime_utrs,
-                       'three_prime_utrs':args.three_prime_utrs}
+                       'masked':args.masked}
     output_keys = filter(lambda k: possible_output[k] is not None, possible_output)
     to_output = dict([(k, possible_output[k]) for k in output_keys])
     
     method = '5prime-most' if args.most_5prime else '5prime-hsp'
-    predictall(contig_objects, args.evalue, method, args.use_pfam, to_output,
+    predictall(contig_objects, args.evalue, method, args.use_pfam,
+               args.use_missing_5prime, to_output,
                args.query_start, args.subject_start, args.verbose)
     return contig_objects
 
@@ -106,7 +106,7 @@ def main():
                                 default=None,
                                 help="filename of the GTF of ORF predictions")
     parser_predict.add_argument('-e', '--evalue', type=float,
-                                default=10e-5,
+                                default=1e-5,
                                 help=("e-value threshold (relative hit "
                                       "only include if less than this)"))
     parser_predict.add_argument('-v', '--verbose', action="store_true",
@@ -127,14 +127,14 @@ def main():
     parser_predict.add_argument('-n', '--no-relatives', type=argparse.FileType('w'), 
                                 default=None,
                                 help="FASTA file to output contigs without relatives")
-    parser_predict.add_argument('-3', '--three-prime-utrs', type=argparse.FileType('w'), 
+    parser_predict.add_argument('-M', '--masked', type=argparse.FileType('w'), 
                                 default=None,
-                                help="FASTA file to output the 3'-UTRs, for disjoining")
-    parser_predict.add_argument('-5', '--five-prime-utrs', type=argparse.FileType('w'), 
-                                default=None,
-                                help="FASTA file to output the 5'-UTRs, for disjoining")
+                                help="Contigs with masked ORF region, for further iterations")
     parser_predict.add_argument('-u', '--use-pfam', action="store_true", default=False,
                                 help="Use PFAM domains if they are available")
+    parser_predict.add_argument('-r', '--use-missing-5prime', action="store_true", default=False,
+                                help=("Use subject protein start and query start thresholds to "
+                                      "remove open-ended ORF cases"))
     parser_predict.add_argument('-q', '--query-start', default=16, type=int,
                                 help="query start parameter for detecting missing 5'-end")
     parser_predict.add_argument('-t', '--subject-start', default=40, type=int,

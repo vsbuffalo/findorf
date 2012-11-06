@@ -2,7 +2,11 @@
 
 ## Design
 
- - separate BLASTX runs against relatives, effect on K-A statistics.
+ - separate BLASTX runs against relatives, effect on K-A
+   statistics. Why? because we also want a close relative with a short
+   hit (= larger e-value) to be considered alongside a longer hit from
+   a more distant relative. Sure this may not happen, but what about
+   truncated proteins in databases?
  
  - identity-based scoring of frames
 

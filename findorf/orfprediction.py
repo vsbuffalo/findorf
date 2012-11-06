@@ -21,7 +21,7 @@ class ORFTypes(object):
     def __init__(self, seqrng, reason=None):
         self.reason = None
         if seqrng is None:
-            self.type = "none"
+            self.type = "None"
             self.reason = reason
             return
         no_start = seqrng["no_start"]
@@ -151,8 +151,8 @@ def get_all_orfs(seqrecord, frame):
             all_orfs.append(orf)
     return all_orfs
 
-def predictall(contigs, evalue, method, use_pfam, output_fields, qs_thresh,
-               ss_thresh, verbose=True):
+def predictall(contigs, evalue, method, use_pfam, use_missing_5prime,
+               output_fields, qs_thresh, ss_thresh, verbose=True):
     """
     Predict the ORF of a dictionary of contig objects.
     """
@@ -170,8 +170,22 @@ def predictall(contigs, evalue, method, use_pfam, output_fields, qs_thresh,
 
         # predict the ORF. Output is a boolean we don't care about
         # whether one has actually been predicted
-        _ = contig.predict_orf(method, use_pfam, qs_thresh, ss_thresh, evalue)
+        _ = contig.predict_orf(method, use_pfam, use_missing_5prime, qs_thresh, ss_thresh, evalue)
         counter['total'] += 1
 
     for field in output_fields:
         WRITERS[field](contigs, output_fields[field])
+
+def count_5prime_ATG(seq, frame, start):
+    """
+    Return the number of in-frame ATG codons 5' of the start site, for
+    annotating other possible start codons.
+
+    start is always relative to the contig on the forward strand. Note
+    that get_codons() always returns the *start* of the codon as the
+    codon position, so we use <, not <=.
+    """
+    codons = get_codons(seq, frame)
+    codons_before_start = filter(lambda (c, _, p): p < start and c.upper() == "ATG", codons)
+    return len(codons_before_start)
+

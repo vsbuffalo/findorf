@@ -6,7 +6,7 @@ from Bio.SeqRecord import SeqRecord
 from Bio.Seq import Seq
 from Bio import SeqIO
 
-from findorf.orfprediction import get_all_orfs
+from findorf.orfprediction import get_all_orfs, count_5prime_ATG
 
 def test_get_all_orfs_case_generator():
     cases = list()
@@ -41,3 +41,21 @@ def check_get_all_orfs(seq, frame, start, end):
     orfs = get_all_orfs(seq, frame)
     assert_equal(orfs.start, start)
     assert_equal(orfs.end, end)
+
+def test_count_5prime_ATG():
+    s1 = Seq("ATGGGGATGGGGATG") # frame 1
+    s2 = Seq("AATGGGGATGGGGATG").reverse_complement() # frame -2
+    
+    assert_equal(count_5prime_ATG(s1, 1, 0), 0)
+    assert_equal(count_5prime_ATG(s1, 1, 100), 3)
+    assert_equal(count_5prime_ATG(s1, 1, 4), 1)
+    assert_equal(count_5prime_ATG(s1, 1, 8), 2)
+    assert_equal(count_5prime_ATG(s1, 1, 6), 1)
+
+    # same cases above, with frame adjusted. 
+    assert_equal(count_5prime_ATG(s2, -2, 0), 0)
+    assert_equal(count_5prime_ATG(s2, -2, 100), 3)
+    assert_equal(count_5prime_ATG(s2, -2, 4), 1)
+    assert_equal(count_5prime_ATG(s2, -2, 8), 2)
+    assert_equal(count_5prime_ATG(s2, -2, 6), 1)
+    

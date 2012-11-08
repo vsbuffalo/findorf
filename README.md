@@ -1,15 +1,36 @@
 # findorf: ORF prediction of de novo transcriptome assemblies
 
 `findorf` is an ORF prediction and transcriptome contig annotation
-tool that uses the results of separate BLASTX results against close
-relatives. It also annotates cases where a contig appears to be
-missing a 5'-end, a predicted ORF is missing a 3'-end, internal stop
-codons, and frameshifts.
+tool designed to be non-model organism-friendly.
+
+## How is `findorf` different?
+
+There are many approaches to ORF annotation (see
+[ORFPredictor](http://proteomics.ysu.edu/tools/docs/OrfPredictor_faq.html),
+[Dragon TIS](http://cbrc.kaust.edu.sa/dts.), and
+[MetWAMer](http://www.biomedcentral.com/1471-2105/9/381)). Below are
+some key design differences of `findorf`:
+
+ - Unlike most Translation Initiation Site (TIS) prediction software,
+   `findorf` does not train on nucleotide signal matrices. This
+   approach is common in computationally spliced gene models coming
+   from genomic sequences after gene prediction.
+
+ - `findorf` uses BLASTX hits against seperated relative databases and
+   PFAM domain information to infer ORF start position.
+
+ - `findorf` uses relative information from BLASTX to annotate
+   frameshifts, premature stop codons, etc.
+
+ - `findorf` is designed with non-model plant species in mind.
 
 ## Requirements
 
-`findorf` requires Python (version >= 2.7) and
-[BioPython](http://biopython.org).
+`findorf` requires:
+ - [Python](http://python.org) (version >= 2.7)
+ - [BioPython](http://biopython.org)
+ - [BioRanges](https://github.com/vsbuffalo/BioRanges) - a small
+   package for handling ranges one sequences
 
 ## Installation
 
@@ -18,15 +39,134 @@ in the directory:
 
     python setup.py install
 
-## `findorf` Join
+## `findorf`'s General Approach
+
+### Using Seperate BLASTX Databases
+
+First, `findorf` relies upon the idea of BLASTXing each contig against
+a database of relative proteins seperately, rather than a combined
+protein database. The motivation for this is that databases of
+computationally predicted proteins (say from EST or cDNA sequences)
+may include incorrectly predicted proteins. In non-model organisms,
+closest relative may also be non-model and its protein data less
+likely to be validated by multiple source, undergo multiple prediction
+algorithms, or be externally validates with proteomic data. Thus, ORF
+prediction that looks at just top hits is not robust against this.
+
+`findorf` tries to prevent this by seperate BLASTXs against all
+relatives. Key decisions such as annotating a case as having a
+majority frameshift or internal stop codon are done by looking at what
+many relatives' data say.
+
+After ORF prediction, the output GTF file contains annotation on the
+relative that determined the start codon position. This can be used as
+independent validation that 5' sites are primarily being chosen by
+closer relatives (since it's likely more distant relatives 5' regions
+would have diverged more).
+
+### Choosing a Start Site
+
+After infering frame and noting any frameshifts or strand
+inconsistencies, `findorf` then chooses its start site. There are two
+methods `findorf` can use: **5'-most methionine** (experimental), and
+extension from **5'-most HSP**. We recommend using the latter.
+
+Both techniques start but enumerating every possible ORF including
+overlapping cases. This is illustrated below:
+
+              |--HSP1--|
+
+       S---------6------E
+            S----4------E           S----------5----------E
+    s------------1------E  S-------------------2----------E   S-3-e
+    |--M----M-----------*--M--------M---------------------*---M---|
+
+    S: ORF start with start codon
+    s: ORF start with missing start codon
+    E: ORF end with stop codon
+    e: ORF end with missing stop codon
+
+Note that the contig above has six candidates, two with open ended
+cases (indicated by lower case 's' and 'e'). Suppose HSP1 is our
+5'-most HSP. Under the **5'-most HSP** rule, ORF 4 is chosen because
+it overlaps the 5' most HSP (HSP1) with the least 5'
+extension. Essentially, this method chooses the start site based on
+whatever evidence we have.
+
+If the **5'-most methionine** approach were used (not recommend
+currently), we face an ambiguity: should we chose the open ended case
+(1) or the closed case (6)? To decide, we need additional information
+about whether we think we're missing the 5'-end of this contig. This
+is why the `--use-missing-5prime` option exists: this rule-based uses
+simple thresholding (see below) to guess whether a contig is missing
+its 5' and start codon. In this case, it will remove or keep
+open-ended start cases (ORF 1 in this example).
+
+Note that the **5'-most HSP** approch removes the need for this simple
+threshold-based rule. Suppose we had HSP1, but ORF 5's methionine did
+not exist. In this case, we don't have anythink to resolve between
+candidates 6 and 1: 6 would be chosen because this is candidate
+overlaps the 5'-most HSP. ORF candidate 1 would only be chosen in the
+event that 4 and 6 did not exist. Again, this approach is about using
+whatever evidence available and not infering more than the HSPs
+say. 
+
+Fundamentally, it's a tradeoff between the cost of possibly choosing
+an internal methionine and choosing the outermost methionine and
+possibly predicting part of the UTR is coding sequence. [Sparks and
+Brendel](http://www.biomedcentral.com/1471-2105/9/381) (2008) show
+that the 1st ATG approch works very well 94% specificity and
+sensitivity (assuming complete 5' regions), but one may decide the
+cost of predicting a more 5' start site is higher.
+
+### Robust Against Mis-Assembly and Chimeric Contigs
+
+A key feature of `findorf` is that it can also output contigs
+sequences with the predicted ORF hardmasked (with "X"s). This allows
+one to BLASTX these masked sequences and run `findorf` a second
+iteration. If futher ORFs are found in these non-masked regions, it's
+a candidate chimeric contig (as there shouldn't be homology with
+protein sequences in the UTRs*). In these cases, we can use ORF
+prediction in assembled transcriptome sequences to also judge the
+incidence of misassembled contigs.
+
+*: Note that there are cases when we this could occur, i.e. if a gene
+ is interrupted with a nonsense mutation but still remains functional
+ or an internal TIS start site was chosen accidentally.
+
+### Including PFAM Domains
+
+The ends of proteins can vary considerably; since `findorf` start site
+choice is based on the 5'-most HSP with a sequence, there's also the
+option to use PFAM domains to detect possible domains in novel protein
+fusions. This is especially important in 5' regions were a lack of
+N-terminus homology can confound ORF start prediction. 
+
+HMMER's `hmmscan` can be used to annotate PFAM domains using HMM
+approaches. We recommend running the command as such:
+
+    hmmscan -E 0.001 --domE 1 --tblout <tblout> --domtblout <domtblout> -o <outfile> --noali <database> <infile>
+
+The `<tblout>` file would then be passed to `findorf join` with
+`--domain-hits`. **You also must tell `findorf` to use PFAM results in
+the prediction process** with `-u` or `--use-pfam`. PFAM domains will
+only affect ORF start site choice; they are not used for annotating
+frameshifts or internal stop codons (due to the fact a PFAM domain 3'
+of a stop codon could be due to a chimeric contig). Prediction cases
+that are extended based on PFAM domains will have the key
+`pfam_extended_5prime` set to `True` in the GTF file.
+
+## Running `findorf`
+
+### `findorf` Join
 
 `findorf` first joins the contig sequence FASTA file with the results
 of each separate BLASTX against relatives using the `join`
 subcommand. This is to ensure that if prediction is run with different
-parameters, this step is not unnecessarily repeated.
+parameters this step is not unnecessarily repeated.
 
     findorf join --ref contigs.fasta at:blast-a_thaliana_alt.xml bd:blast-b_distachyon_alt.xml \
-      zm:blast-z_mays_alt.xml os:blast--o_sativa_alt.xml
+      zm:blast-z_mays_alt.xml os:blast-o_sativa_alt.xml
 
 Note that it is *highly* recommended organism abbreviation names are
 provided (otherwise they'll be extracted from the basename). These are
@@ -54,6 +194,25 @@ at the data more closely.
 
 Entering `findorf predict --help` will list all options.
 
+## Pre-Prediction Attributes
+
+`findorf` first gathers some information about a contig based on HSPs
+from the relatives' seperate BLASTX results and PFAM domains. These
+attributes are described below and are the requisite information for
+ORF prediction.
+
+### Relatives
+
+If there are no BLASTX hits to a contig, ORF predict does not predict
+an ORF. One could take these cases and use an *ab initio* procedure
+based on coding potential, PFAM domains, etc.
+
+### Inconsistent Strand
+
+`findorf` also checks that HSPs are on the same strand (allowing for
+different frames due to frameshift). This could be due do a local
+translocation, mis-assembly (conjoined contigs), or overlap.
+
 ### Majority Frame
 
 `findorf` determines the **majority frame** across all relatives. The
@@ -62,47 +221,20 @@ more identities in a certain frame, more evidence that this is the
 correct frame. In practice, there is very little disagreementacross
 relatives about the frame in our test data.
 
-### Majority and Any Frameshift
-
-As with finding the majority frame, finding the **majority
-frameshift** is based on the number of identities. If there are more
-identities from HSPs disagreeing on the frame (per relative) than not,
-we say there's a majority frameshift.
-
-There's also **any frameshift**, which indicates if any relative says
-there's a frameshift.
-
-### Inconsistent Strand
-
-`findorf` also checks that HSPs are on the same strand (allowing for
-different frames due to frameshift). This could be due do a local
-translocation, mis-assembly (conjoined contigs), or overlap.
-
-### Anchor HSPs
-
-For each relative, we calculate the **anchor HSPs**, which are the 5'-
-and 3'-most HSPs on a contig (respecting strand). These are done for
-each relative a contig has, subsetting by e-value and per-relative
-percent identity thresholds (via the method `get_relatives()`). If a
-relative's HSP falls outside of these thresholds, it is not
-considered. This has two primary goals:
-
-1. Let phylogenetic a priori beliefs about how close a relative should
-guide the ORF prediction and annotation process.
-
-2. Guard against potentially incorrect databases.
-
-Note that if a contig has a single long HSP, this becomes the 5'- and
-3'-most HSP.
-
 ### Missing 5'-end
 
-`findof` annotates cases of a **missing 5'-end** based on whether our
-5'-most anchor HSP corresponds to a subject protein that appears to be
-cut. For example, suppose our contig's 5'-most HSP has a query start
-position of 1 (the first nucleotide; assume this aligned to frame
-1). If our subject protein starts 45 amino acids in, it's very likely
-our contig is missing the 5'-end.
+**Note: this is not recommended unless you are running with
+  `--most-5prime`.** It is a simple thresholding and rule based
+  approach. Regardless of this option, cases in which the following
+  are true are annotated in the GTF under the key `distant_start`.
+
+With `--use-missing-5prime`, `findof` annotates cases of a **missing
+5'-end** based on whether our 5'-most anchor HSP corresponds to a
+subject protein that appears to be cut. For example, suppose our
+contig's 5'-most HSP has a query start position of 1 (the first
+nucleotide; assume this aligned to frame 1). If our subject protein
+starts 45 amino acids in, it's very likely our contig is missing the
+5'-end.
 
 However, to increase sensitivity, `findorf` has fuzzy defaults: the
 query start of the 5'-most HSP must be 16 nucleotides or less into the
@@ -122,83 +254,59 @@ acids. See the figure below for an illustration of these parameters.
 ## ORF Prediction
 
 Finally, with these necessary requisite attributes, `findorf` can
-proceed and try to predict the ORF. There are three separate ORF
-prediction procedures, depending on the attributes of the contig
-gathered from the relatives: (1) predict in the case of a frameshift,
-(2) predict in teh case of a missing 5'-end, and (3) predict in the
-case of a plain (vanilla) case. Note that it's possible that the data
-reveal the case of a frameshift and missing 5'-end, which is handleded
-by the frameshift prediction function.
+proceed and try to predict the ORF.
 
-All three cases lead to **candidate** ORFs. The chosen candidate is
-the one that overlaps the 5'-most anchor HSP of the closest relative.
+### 5'- and 3'-most Anchor HSPs
 
-In some cases, a candidate HSP could be missing a start or stop codon;
-in these cases, essentially `findorf` looks for one-sided overlap with
-the 5'-most anchor HSP.
+The first step is to gather the HSPs (from any relative) that are the
+5'-most and 3'-most. These are subject to the e-value based filtering
+(command line option `-evalue`, default 1e-5). The 5'-most HSP is what
+determines ORF start position (more on this below).
 
 ### Majority Frameshift Prediction
 
-If there's a majority frameshift, `finforf` uses the
-`predict_ORF_frameshift` procedure. First, `findorf` checks if there's
-also a missing 5'-end. If so, it sets `in_reading_frame` to True, to
-allow an ORF with a missing start codon to be added to the candidate
-list. If not, `in_reading_frame` is False, meaning the procedure must
-find a full length ORF in the 5'-end.
-
-Because a frameshift could still lead to a functional protein, this
+If there's a majority frameshift, `findorf` does not use the majority
+frame, but rather the frame of the 5'-most HSP. A contig with a
+frameshift mutation could still be functional. In this case, the
 prediction procedure operators as a ribosome would: it reads in the
-frame of the 5'-most anchor HSP of the closest relative.
+frame of the 5'-most anchor HSP of the closest relative. These cases
+are annotated in the GTF as: `majority_frameshift True`.
 
-### Mising 5'-end Prediction
+### PFAM 
 
-If a majority of relatives indicate that the 5'-end is missing from a
-contig, `findorf` sets `in_reading_frame` to True, assuming that this
-contig is missing the start codon. This is the first ORF of the
-candidate ORFs.
+If `--use-pfam` is set, `findorf` will then take all PFAM domains and
+remove those with a frame that differs from the majority frame. *Note:
+the specified e-value threshold does not apply to PFAM domain hits*
+(since e-values are calculated differently). If you wish to filter
+PFAM domains by e-value, you must do so via `awk` or the `hmmscan`
+tool.
 
-### Vanilla Prediction
+With these domain hits in the same frame as the majority frame,
+`findorf` then checks if any is more 5' than the 5'-most anchor
+HSP. If so, this is used as the 5'-most range during ORF prediction.
 
-If there's no frameshift or suspected missing 5'-end, `findorf` simply
-finds all ORFs in a sequence and adds them to the candidate list.
+### ORF Enumeration and Overlap Finding
 
-### Candidates to Prediction, and ORF Annotation
+As illustrated in the "Choosing a Start Site" section above, `findorf`
+enumerates all ORF possibilities, including the open-ended cases and
+overlapping cases. This list of ORF candidates is then subset by those
+overlapping the 5'-most HSP (or PFAM hit). Those that overlap are then
+chosen according to the **5'-most HSP** or **5'-most methionine** rule
+(discussed more above). Cases in which there is no start or stop codon
+are annotated.
 
-With these candidates, `findorf` then predicts the ORF that overlaps
-the 5'-most anchor HSP of the closest relative.
+### Internal Stop Codon Annotation
 
-With an ORF prediction, `findorf` then annotates this particular ORF,
-indicating whether it missing a start or stop codon. Also, `findorf`
-then goes through each relative's 3'-most anchor HSPs and notes if
-there's any cases where these lie outside this ORF. If so, this ORF is
-annotated possibly containing an internal stop codon, as there 3'
-regions of the contig that contain alignment HSPs. All relatives are
-used for this step for maximum sensitivity.
+To be robust against the possibility of chimeric contigs, an internal
+(or premature) stop codon is annotated as the case in which there are
+more relatives that have an HSP that:
 
-## Annotation Inconsistencies 
+1. Overlaps the ORF.  
 
-In some cases, annotation `findorf` produces may appear
-inconsistent. `findorf` does not try to push every possible case into
-a category. Furthermore, some steps work with the closest relative
-when it makes more sense (finding the best ORF out of a list), while
-others, for maximum sensitivity, use all relatives.
+2. Have an end position greater than the ORF stop codon + 60bp (known
+as `buffer_bp` in the code):
 
-This can lead to tricky cases where the ORF prediction or annotation
-terms disagree. For example, missing 5'-end could be true, while
-missing start codon could be false. Why could this occur?
+                          ORF end                                                                                                                                                                                                                                                   ------------------|   buffer_bp                                                                                                                                                                                                                                             ---------------------------|--------| HSP end   
 
-Recall missing 5'-end is a *majority* rule; the majority of relatives
-have to agree that this is the case before it is annotated as
-such. However, in choosing the best ORF out of all possible ORFs in
-the contig, we take the 5'-most ORF that overlaps the 5'-most anchor
-HSP of the *closest relative* (not majority). In this case our closest
-relative could have disagreed with the majority.
-
-Why shouldn't `findorf` just look at the closest relative? `findorf`
-was written for use in predicting and annotating ORFs in wheat, where
-some of the closest relatives (barley and brachypodium) are less
-well-studied species than say, arabidopsis. For this reason, some of
-the closest relative database information may be
-incorrect. Incorporating all relative information into finding frame
-and anchor HSPs will guard against this, but still leave us with some
-incosistent cases that are best manually curated.
+The overlap requirement protects against the case in which a chimeric
+contig has an HSP (to the other chimeric mRNA) past the stop site.

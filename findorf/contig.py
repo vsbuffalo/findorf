@@ -6,6 +6,7 @@ it stores uses objects from BioPython directly.
 Strange cases:
  - k61_contig_13995
 
+TODO add stop codon number of BP
 """
 
 import pdb
@@ -37,7 +38,6 @@ ANNOTATION_FIELDS = ["most_5prime_relative", # string
                      "num_relatives", # integer
                      "majority_frameshift", # boolean
                      "internal_stop", # boolean
-                     "new_internal_stop", # boolean
                      "distant_start", # boolean
                      "diff_5prime_most_start_and_orf", # integer
                      "num_5prime_ATG"] # integer 
@@ -229,7 +229,7 @@ class Contig():
         msg = msg % (self.orf_type.type, hsp_id, self.orf["most_5prime_hsp"]["relative"])
         if pfam_extension:
             msg += " with PFAM domain extension"
-        return msg + "; " + self.description.split(" ")[1:]
+        return msg + "; " + " ".join(self.description.split(" ")[1:])
 
 
     @property
@@ -481,6 +481,8 @@ class Contig():
         """
         Check if there are any _non-masked_ HSPs more 3' than the ORF
         end position (everything on forward strand)
+
+        DEPRECATED
         """
         if not self.has_relative or self.orf is None:
             return None
@@ -561,7 +563,7 @@ class Contig():
         (which should be the 5' anchor HSP), or None of if there is none.
 
         Note that all PFAM domains are on the positive strand, since
-        PFAM domains found via HMMSCAN were in protein space.
+        PFAM domains found via CAN were in protein space.
         """
         if len(self.pfam_domains) == 0:
             return None # no PFAM domains, so nothing more 5'
@@ -645,15 +647,12 @@ class Contig():
         ## Check for PFAM frames, if necessary
         if use_pfam:
             more_5prime_pfam = self.more_5prime_pfam_domain(most_5prime, frame)
-            # TOADD annotate PFAM frameshifts
             if more_5prime_pfam is not None:
                 most_5prime = more_5prime_pfam
             self.annotation["pfam_extended_5prime"] = more_5prime_pfam is not None
 
         ## 3. Look for missing 5'-end
         missing_5prime = self.missing_5prime(qs_thresh, ss_thresh, min_expect)
-        if missing_5prime:
-            self.annotation
         self.annotation["distant_start"] = missing_5prime
             
         ## 4. Get all ORFs
@@ -689,6 +688,7 @@ class Contig():
                 tmp = sorted(orf_i, key=lambda x: overlapping_candidates[x].start)
                 assert(len(tmp) > 0)
                 orf_range_i = tmp[0]
+                # assert(not overlapping_candidates[orf_range_i]["no_start"])
             elif method == '5prime-hsp':
                 # which of the overlapping candidates have a start
                 # position 5' of the most 5' HSP?

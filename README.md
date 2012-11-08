@@ -11,6 +11,9 @@ There are many approaches to ORF annotation (see
 [MetWAMer](http://www.biomedcentral.com/1471-2105/9/381)). Below are
 some key design differences of `findorf`:
 
+ - Designed to work on transcriptome assemblies rather than on genome
+   gene models.
+
  - Unlike most Translation Initiation Site (TIS) prediction software,
    `findorf` does not train on nucleotide signal matrices. This
    approach is common in computationally spliced gene models coming
@@ -209,7 +212,9 @@ based on coding potential, PFAM domains, etc.
 
 `findorf` also checks that HSPs are on the same strand (allowing for
 different frames due to frameshift). This could be due do a local
-translocation, mis-assembly (conjoined contigs), or overlap.
+translocation, mis-assembly (conjoined contigs), or overlap. In does
+not predict in these degenerate cases and they are labelled in the GTF
+with the `inconsistent_strand` key.
 
 ### Majority Frame
 
@@ -273,8 +278,8 @@ are annotated in the GTF as: `majority_frameshift True`.
 ### PFAM 
 
 If `--use-pfam` is set, `findorf` will then take all PFAM domains and
-remove those with a frame that differs from the majority frame. *Note:
-the specified e-value threshold does not apply to PFAM domain hits*
+remove those with a frame that differs from the majority frame. **Note:
+the specified e-value threshold does not apply to PFAM domain hits**
 (since e-values are calculated differently). If you wish to filter
 PFAM domains by e-value, you must do so via `awk` or the `hmmscan`
 tool.
@@ -310,3 +315,5 @@ as `buffer_bp` in the code):
 
 The overlap requirement protects against the case in which a chimeric
 contig has an HSP (to the other chimeric mRNA) past the stop site.
+
+

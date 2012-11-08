@@ -156,9 +156,7 @@ of a stop codon could be due to a chimeric contig). Prediction cases
 that are extended based on PFAM domains will have the key
 `pfam_extended_5prime` set to `True` in the GTF file.
 
-## Running `findorf`
-
-### `findorf` Join
+## Running `findorf`: Join
 
 `findorf` first joins the contig sequence FASTA file with the results
 of each separate BLASTX against relatives using the `join`
@@ -172,7 +170,7 @@ Note that it is *highly* recommended organism abbreviation names are
 provided (otherwise they'll be extracted from the basename). These are
 then used throughout the predict stage as identifiers.
 
-## `findorf` Predict
+## Running `findorf`: Predict
 
 The `predict` subcommand predicts ORFs and annotates contigs and
 ORFs. Annotation refers not to biological or functional annotation
@@ -194,7 +192,7 @@ at the data more closely.
 
 Entering `findorf predict --help` will list all options.
 
-## Pre-Prediction Attributes
+## Prediction Methods: Pre-Prediction Attributes
 
 `findorf` first gathers some information about a contig based on HSPs
 from the relatives' seperate BLASTX results and PFAM domains. These
@@ -251,7 +249,7 @@ acids. See the figure below for an illustration of these parameters.
      start
         
 
-## ORF Prediction
+## Prediction Methods: ORF Choice
 
 Finally, with these necessary requisite attributes, `findorf` can
 proceed and try to predict the ORF.

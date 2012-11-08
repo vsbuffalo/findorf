@@ -306,7 +306,9 @@ more relatives that have an HSP that:
 2. Have an end position greater than the ORF stop codon + 60bp (known
 as `buffer_bp` in the code):
 
-                          ORF end                                                                                                                                                                                                                                                   ------------------|   buffer_bp                                                                                                                                                                                                                                             ---------------------------|--------| HSP end   
+                   ORF end
+    ------------------|   buffer_bp
+    ---------------------------|--------| HSP end   
 
 The overlap requirement protects against the case in which a chimeric
 contig has an HSP (to the other chimeric mRNA) past the stop site.

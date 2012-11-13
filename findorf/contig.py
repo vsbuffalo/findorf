@@ -39,6 +39,8 @@ ANNOTATION_FIELDS = ["most_5prime_relative", # string
                      "majority_frameshift", # boolean
                      "internal_stop", # boolean
                      "distant_start", # boolean
+                     "most_5prime_query_start", # integer
+                     "most_5prime_sbjct_start", # integer
                      "diff_5prime_most_start_and_orf", # integer
                      "num_5prime_ATG"] # integer 
 
@@ -425,50 +427,6 @@ class Contig():
 
         return frameshifts[True] >= frameshifts[False]
 
-    def missing_5prime(self, qs_thresh=16, ss_thresh=40,
-                       min_expect=DEFAULT_MIN_EXPECT):
-        """
-        Return True if the anchor HSPsx indicate a missing 5'-end of
-        this contig.
-
-        `qs_start` and `ss_thresh` are in amino acids.
-        Each HSP has a query start and a subject start. A missing
-        5'-end would look like this (in the case that the HSP spans
-        the missing part):
-        
-                       query start
-                      |   HSP
-                 |------------------------------------------| contig
-                      |||||||||||
-              |.......|---------| subject
-           subject
-            start
-        
-        We infer missing 5'-end based on the query start position
-        (compared to a threshold, `qs_thresh`) and the subject start
-        position (`ss_thresh`). Starting late in the subject and early
-        in the query probably means we're missing part of a protein.
-
-        If missing_5prime is True, then we also want to consider the
-        case that there is not start codon 5' of the 5'-most HSP --
-        this is a case where the start is 100% missing.
-        
-        """
-
-        if not self.has_relative:
-            return None
-
-        most_5prime_relative, most_5prime, most_3prime = self.get_anchor_HSPs(min_expect)
-        
-        if most_5prime.strand == "-":
-            missing = (most_5prime.start <= qs_thresh and
-                       most_5prime['sbjct_start'] >= ss_thresh)
-        else:
-            qs = abs(most_5prime.start - most_5prime.width) + 1 # blast results are 1-indexed
-            missing = qs <= qs_thresh and most_5prime['sbjct_start'] >= ss_thresh
-
-        return missing
-
     def add_pfam(self, domain_hit_seqrange):
         """
         Add PFAM domain hit (from HMMER). Note that all of the
@@ -581,8 +539,7 @@ class Contig():
             return most_5prime_pfams[0]
         return None
         
-    def predict_orf(self, method='5prime-hsp', use_pfam=True, use_missing_5prime=False,
-                    qs_thresh=16, ss_thresh=40, min_expect=DEFAULT_MIN_EXPECT):
+    def predict_orf(self, method='5prime-hsp', use_pfam=True, min_expect=DEFAULT_MIN_EXPECT):
         """
         Predict ORF based on one of two methods:
 
@@ -619,7 +576,6 @@ class Contig():
         strand = self.get_strand(min_expect)
         most_5prime_relative, most_5prime, most_3prime = self.get_anchor_HSPs(min_expect)
         self.annotation['most_5prime_relative'] = most_5prime_relative
-        most_5prime_hsp = most_5prime # reference for annotation, in case of PFAM extension
 
         ## 1. Try to infer frame
         ## 1.a Look for frameshift
@@ -644,16 +600,14 @@ class Contig():
             most_5prime, most_3prime = (most_5prime.forward_coordinate_transform(),
                                         most_3prime.forward_coordinate_transform())
 
+        most_5prime_hsp = most_5prime # reference for annotation, in case of PFAM extension
+
         ## Check for PFAM frames, if necessary
         if use_pfam:
             more_5prime_pfam = self.more_5prime_pfam_domain(most_5prime, frame)
             if more_5prime_pfam is not None:
                 most_5prime = more_5prime_pfam
             self.annotation["pfam_extended_5prime"] = more_5prime_pfam is not None
-
-        ## 3. Look for missing 5'-end
-        missing_5prime = self.missing_5prime(qs_thresh, ss_thresh, min_expect)
-        self.annotation["distant_start"] = missing_5prime
             
         ## 4. Get all ORFs
         orf_candidates = get_all_orfs(self.record, frame)
@@ -667,22 +621,13 @@ class Contig():
             self.orf_type = ORFTypes(None, "no_orf_candidates")
             return None
 
-        ## 4.a If we don't have a missing 5'-end, remove candidates
-        ## that are missing start codon.
-        if not missing_5prime and use_missing_5prime:
-            no_starts = orf_candidates.getdata('no_start')
-            tmp = SeqRanges()
-            for i, no_start in enumerate(no_starts):
-                if not no_start:
-                    tmp.append(orf_candidates[i])
-            orf_candidates = tmp
-
         ## 6. ORF Prediction: subset ORFs by those that overlap the
         ## 5'-most HSP
         overlapping_candidates = orf_candidates.subsetByOverlaps(most_5prime)
         if len(overlapping_candidates):
             ## 6.a Method-dependent ORF selection. Method (a): 5'-most
-            ## start codon.
+            ## start codon. If there is none, we take the open-ended
+            ## case.
             if method == '5prime-most':
                 orf_i = range(len(overlapping_candidates))
                 tmp = sorted(orf_i, key=lambda x: overlapping_candidates[x].start)
@@ -744,6 +689,12 @@ class Contig():
                 assert(tmp > 0)
                 self.annotation["diff_5prime_most_start_and_orf"] = tmp
 
+        ## Annotate the data used in the 5'-most HSP, specifically
+        ## subject and query start
+        self.annotation["most_5prime_query_start"] = most_5prime_hsp.start
+        self.annotation["most_5prime_sbjct_start"] = most_5prime_hsp['sbjct_start']
+
+
         return orf
     
 if __name__ == "__main__":
@@ -766,3 +717,22 @@ if __name__ == "__main__":
     #         continue
     #     if not anch.most_5prime.overlaps(more_5prime_pfam):
     #         print key
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

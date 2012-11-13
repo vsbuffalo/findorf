@@ -63,8 +63,7 @@ def _predict_all_orfs(args):
     
     method = '5prime-most' if args.most_5prime else '5prime-hsp'
     predictall(contig_objects, args.evalue, method, args.use_pfam,
-               args.use_missing_5prime, to_output,
-               args.query_start, args.subject_start, args.verbose)
+               to_output, args.verbose)
     return contig_objects
 
 def main():
@@ -132,13 +131,6 @@ def main():
                                 help="Contigs with masked ORF region, for further iterations")
     parser_predict.add_argument('-u', '--use-pfam', action="store_true", default=False,
                                 help="Use PFAM domains if they are available")
-    parser_predict.add_argument('-r', '--use-missing-5prime', action="store_true", default=False,
-                                help=("Use subject protein start and query start thresholds to "
-                                      "remove open-ended ORF cases"))
-    parser_predict.add_argument('-q', '--query-start', default=16, type=int,
-                                help="query start parameter for detecting missing 5'-end")
-    parser_predict.add_argument('-t', '--subject-start', default=40, type=int,
-                                help="subject start parameter for detecting missing 5'-end")
     parser_predict.add_argument('-m', '--most-5prime', default=False, action="store_true",
                                 help="always use most 5' start codon")
     parser_predict.set_defaults(func=_predict_all_orfs)

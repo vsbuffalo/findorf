@@ -71,8 +71,8 @@ would have diverged more).
 
 After infering frame and noting any frameshifts or strand
 inconsistencies, `findorf` then chooses its start site. There are two
-methods `findorf` can use: **5'-most methionine** (experimental), and
-extension from **5'-most HSP**. We recommend using the latter.
+methods `findorf` can use: **5'-most methionine**, and extension from
+**5'-most HSP**. We recommend using the latter.
 
 Both techniques start but enumerating every possible ORF including
 overlapping cases. This is illustrated below:
@@ -96,27 +96,17 @@ it overlaps the 5' most HSP (HSP1) with the least 5'
 extension. Essentially, this method chooses the start site based on
 whatever evidence we have.
 
-If the **5'-most methionine** approach were used (not recommend
-currently), we face an ambiguity: should we chose the open ended case
-(1) or the closed case (6)? To decide, we need additional information
-about whether we think we're missing the 5'-end of this contig. This
-is why the `--use-missing-5prime` option exists: this rule-based uses
-simple thresholding (see below) to guess whether a contig is missing
-its 5' and start codon. In this case, it will remove or keep
-open-ended start cases (ORF 1 in this example).
+If the **5'-most methionine** approach were used, we face an
+ambiguity: should we chose the open ended case (1) or the closed case
+(6)? If there is a non-open ended ORF (that is, there is a methionine
+5' of the HSP), this is chosen. If there were two non-open ORF cases,
+we would choose the one with the earliest methionine. But in this
+approach, the handling of missing 5'-ends is less clear.
 
-Note that the **5'-most HSP** approch removes the need for this simple
-threshold-based rule. Suppose we had HSP1, but ORF 5's methionine did
-not exist. In this case, we don't have anythink to resolve between
-candidates 6 and 1: 6 would be chosen because this is candidate
-overlaps the 5'-most HSP. ORF candidate 1 would only be chosen in the
-event that 4 and 6 did not exist. Again, this approach is about using
-whatever evidence available and not infering more than the HSPs
-say. 
-
-Fundamentally, it's a tradeoff between the cost of possibly choosing
-an internal methionine and choosing the outermost methionine and
-possibly predicting part of the UTR is coding sequence. [Sparks and
+Between the two approaches there's a tradeoff between the cost of
+possibly choosing an internal methionine and choosing the outermost
+methionine and possibly predicting part of the UTR is coding
+sequence. [Sparks and
 Brendel](http://www.biomedcentral.com/1471-2105/9/381) (2008) show
 that the 1st ATG approch works very well 94% specificity and
 sensitivity (assuming complete 5' regions), but one may decide the
@@ -224,27 +214,17 @@ more identities in a certain frame, more evidence that this is the
 correct frame. In practice, there is very little disagreementacross
 relatives about the frame in our test data.
 
-### Missing 5'-end
+### Query and Subject Start Attributes
 
-**Note: this is not recommended unless you are running with
-  `--most-5prime`.** It is a simple thresholding and rule based
-  approach. Regardless of this option, cases in which the following
-  are true are annotated in the GTF under the key `distant_start`.
+`findorf` annotates (in the GTF) the 5'-most HSP query start and query
+end. In earlier versions, we experimented with using cutoffs of these
+values to infer whether the 5'-end of a contig was missing. Currently
+these threshold-based approaches are not being used, but one may wish
+to use query and subject start positions as diagnostics. One approach
+is to plot the query and subject start as points (one for every
+contig) and color these by the type of ORF (missing 5', missing 3',
+partial, full-length, etc).
 
-With `--use-missing-5prime`, `findof` annotates cases of a **missing
-5'-end** based on whether our 5'-most anchor HSP corresponds to a
-subject protein that appears to be cut. For example, suppose our
-contig's 5'-most HSP has a query start position of 1 (the first
-nucleotide; assume this aligned to frame 1). If our subject protein
-starts 45 amino acids in, it's very likely our contig is missing the
-5'-end.
-
-However, to increase sensitivity, `findorf` has fuzzy defaults: the
-query start of the 5'-most HSP must be 16 nucleotides or less into the
-contig sequence, and the subject start must be greater than 40 amino
-acids. See the figure below for an illustration of these parameters.
-
-          
              query start
               |   HSP
         |------------------------------------------| contig
@@ -252,7 +232,6 @@ acids. See the figure below for an illustration of these parameters.
       |.......|---------| subject
     subject
      start
-        
 
 ## Prediction Methods: ORF Choice
 

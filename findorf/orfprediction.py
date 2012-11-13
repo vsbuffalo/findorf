@@ -151,8 +151,7 @@ def get_all_orfs(seqrecord, frame):
             all_orfs.append(orf)
     return all_orfs
 
-def predictall(contigs, evalue, method, use_pfam, use_missing_5prime,
-               output_fields, qs_thresh, ss_thresh, verbose=True):
+def predictall(contigs, evalue, method, use_pfam, output_fields, verbose=True):
     """
     Predict the ORF of a dictionary of contig objects.
     """
@@ -170,7 +169,7 @@ def predictall(contigs, evalue, method, use_pfam, use_missing_5prime,
 
         # predict the ORF. Output is a boolean we don't care about
         # whether one has actually been predicted
-        _ = contig.predict_orf(method, use_pfam, use_missing_5prime, qs_thresh, ss_thresh, evalue)
+        _ = contig.predict_orf(method, use_pfam, evalue)
         counter['total'] += 1
 
     for field in output_fields:

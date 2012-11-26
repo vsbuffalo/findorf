@@ -9,8 +9,7 @@ setup(
     version=1.50,
     author='Vince Buffalo',
     author_email='vsbuffalo@gmail.com',
-    packages=find_packages('findorf'),
-    package_dir={'': 'findorf'},
+    packages=['findorf'],
     entry_points = {
         'console_scripts': [
             'findorf = findorf.findorf:main']

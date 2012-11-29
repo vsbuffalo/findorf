@@ -693,11 +693,10 @@ class Contig():
         ## subject and query start
         self.annotation["most_5prime_query_start"] = most_5prime_hsp.start
         self.annotation["most_5prime_sbjct_start"] = most_5prime_hsp['sbjct_start']
-
-
         return orf
     
 if __name__ == "__main__":
+    # code for testing this function interactively
     import cPickle
     a = cPickle.load(open("joined_blastx_dbs.pkl"))
 
@@ -717,22 +716,3 @@ if __name__ == "__main__":
     #         continue
     #     if not anch.most_5prime.overlaps(more_5prime_pfam):
     #         print key
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

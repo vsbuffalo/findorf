@@ -129,6 +129,10 @@ incidence of misassembled contigs.
 
 ### Including PFAM Domains
 
+**Warning: Different ways of defining frame could lead to PFAM steps
+  prior to findorf leading to incorrect results. Read this entire
+  section.**
+
 The ends of proteins can vary considerably; since `findorf` start site
 choice is based on the 5'-most HSP with a sequence, there's also the
 option to use PFAM domains to detect possible domains in novel protein
@@ -136,7 +140,17 @@ fusions. This is especially important in 5' regions were a lack of
 N-terminus homology can confound ORF start prediction. 
 
 HMMER's `hmmscan` can be used to annotate PFAM domains using HMM
-approaches. We recommend running the command as such:
+approaches. `hmmscan` runs on **translated** sequences, in all six
+frames. It is absolutely necessary to ensure that the translation is
+consistent with BLASTX's. Tools such as [emboss
+transeq](http://emboss.sourceforge.net/apps/cvs/emboss/apps/transeq.html)
+can output translates sequences differently that we would guess (and
+different from BLASTX). Be sure that translation and frames indication
+are consistent. findorf's `hmmscan` parser assumes frames are
+indicated in the sequence header, like: `k21_contig_129_+1` or
+`k35_contig_534_-3`, so follow this convention.
+
+We recommend running `hmmscan` command as such:
 
     hmmscan -E 0.001 --domE 1 --tblout <tblout> --domtblout <domtblout> -o <outfile> --noali <database> <infile>
 

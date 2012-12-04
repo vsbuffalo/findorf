@@ -139,3 +139,6 @@ def main():
     # Parse arguments and run the appropriate step
     args = parser.parse_args()
     args.func(args)
+
+if __name__ == "__main__":
+    contigs = main()

@@ -14,7 +14,7 @@ Because the column headers are split across two rows. This is why we
 have to specify columns.
 """
 import pdb
-import re
+import csv
 from collections import namedtuple
 from BioRanges.lightweight import Range, SeqRange
 
@@ -23,32 +23,6 @@ DomainHit = namedtuple("DomainHit", ["target_name", "query_name",
                                      "seq_bias", "domain_num", "total_domains",
                                      "domain_cevalue", "domain_ievalue",
                                      "domain_score", "domain_bias", "ali_from", "ali_to"])
-
-HMMER_COLS = [
-"target_name",
-"accession",
-"tlen",
-"query_name",
-"accession",
-"qlen",
-"seq_evalue",
-"seq_score",
-"seq_bias",
-"domain_num",
-"total_domains",
-"domain_cevalue",
-"domain_ievalue",
-"domain_score",
-"domain_bias",
-"hmm_from",
-"hmm_to",
-"ali_from",
-"ali_to",
-"env_from",
-"env_to",
-"acc",
-"description"]
-
 def make_hmmer_parser(hmmer_file):
     """
     Return a function that parses HMMER files, based on looking at the
@@ -139,25 +113,26 @@ def add_pfam_domain_hits(contigs, domain_hits_file):
     domain_hits = dict()
 
     # make HMMER parser
-    hmmer_parser = make_hmmer_parser(domain_hits_file)
-    pfam_domains = hmmer_parser(domain_hits_file)
     pfam_dict = dict()
-    for row in pfam_domains:
-        key = row.pop('query_name')
+    for line in csv.DictReader(domain_hits_file, delimiter="\t"):
+        key = line['query_name']
+
+        # remove strand from contig name
         tmp = key.split("_")
         query = '_'.join(tmp[:-1])
         frame = int(tmp[-1])
         strand = "-" if frame < 0 else "+"
+        
         seqlen = len(contigs[query].seq)
-        dh = DomainHit(row["target_name"], query,
-                       row["accession"], row["qlen"], row["seq_evalue"],
-                       row["seq_score"], row["seq_bias"], row["domain_num"],
-                       row["total_domains"], row["domain_cevalue"],
-                       row["domain_ievalue"], row["domain_score"],
-                       row["domain_bias"], row["ali_from"], row["ali_to"])
+        dh = DomainHit(line["target_name"], query,
+                       line["target_accession"], line["qlen"], line["seq_evalue"],
+                       line["seq_score"], line["seq_bias"], line["domain_num"],
+                       line["total_domains"], line["domain_cevalue"],
+                       line["domain_ievalue"], line["domain_score"],
+                       line["domain_bias"], line["ali_from"], line["ali_to"])
         data = {"domain_hit":dh, "frame":frame}
-        start = (abs(frame) - 1) + 3*int(row["ali_from"]) - 3
-        end = (abs(frame) - 1) + 3*int(row["ali_to"]) - 3
+        start = (abs(frame) - 1) + 3*int(line["ali_from"]) - 3
+        end = (abs(frame) - 1) + 3*int(line["ali_to"]) - 3
         assert(start <= end)
         seqrng = SeqRange(Range(start, end), seqname=query,
                           strand="+", seqlength=seqlen, data=data)

@@ -538,6 +538,125 @@ class Contig():
         if len(most_5prime_pfams) > 0 and most_5prime_pfams[0].start < most_5prime_hsp.start:
             return most_5prime_pfams[0]
         return None
+
+    def predict_orf_inconsistent_strand(self, method="5prime-hsp", min_expect=DEFAULT_MIN_EXPECT):
+        """
+        Predict both ORFs for a contig with HSPs on different
+        strands. This works in cases in which there are two different
+        frames on different strands. Cases of more than three unique
+        frames will not be handled, as these are likely degenerate
+        cases.
+
+        A lot of this code is duplicated from predict_orf(). TODO:
+        refactor this redundant code out and make common functionality
+        generic methods.
+
+        This function is not interfaced to the command line
+        program. It's used to interogate these strange cases. As such,
+        it does not have side effects on self.orf_type or annotation.
+
+        No PFAM support.
+        """
+
+        assert(self.inconsistent_strand(min_expect))
+
+        filtered_hsps = filter(lambda x: x['expect'] <= min_expect, self.hsps)
+        assert(len(filtered_hsps) >= 1)
+        strands = set([h.strand for h in filtered_hsps])
+        assert(len(strands) == 2)
+
+        # set up data structs for ORFs on both strand; no side-effects
+        # in object.
+        orfs = [None, None]
+        orf_types = [None, None]
+        annotations = [dict(), dict()]
+        for which_strand, strand in enumerate(strands):
+            strand_hsps = filter(lambda x: x.strand == strand, filtered_hsps)
+            tmp = SeqRanges()
+            for shsp in strand_hsps:
+                tmp.append(shsp)
+            strand_hsps = tmp
+
+            i = sorted(range(len(strand_hsps)), key=lambda k: strand_hsps.end[k], reverse=True)[0]
+            j = sorted(range(len(strand_hsps)), key=lambda k: strand_hsps.start[k])[0]
+            annotations[which_strand]["strand"] = strand
+            
+            if strand == "-":
+                # negative strand; 5'-most HSP is that with the largest
+                # query end
+                most_5prime_relative, most_5prime, most_3prime = AnchorHSPs(strand_hsps[i]['relative'], strand_hsps[i], strand_hsps[j])
+            else:
+                # positive strand; 5-most HSP is that with the smallest
+                # query start
+                most_5prime_relative, most_5prime, most_3prime = AnchorHSPs(strand_hsps[j]['relative'], strand_hsps[j], strand_hsps[i])
+
+            annotations[which_strand]['most_5prime_relative'] = most_5prime_relative
+            if len(set(strand_hsps.getdata("frame"))) > 1:
+                # this contig has inconsistent strands and differing HSP frames *per* strand.
+                orf_types[which_strand] = ORFTypes(None, "frameshift_and_inconsistent_strands")
+                orfs[which_strand] = None
+                continue
+
+            frame = most_5prime['frame']            
+
+            # coordinate transform (see note at predict_orf)
+            if frame < 0:
+                most_5prime, most_3prime = (most_5prime.forward_coordinate_transform(),
+                                            most_3prime.forward_coordinate_transform())
+
+            most_5prime_hsp = most_5prime # reference for annotation, in case of PFAM extension
+
+            orf_candidates = get_all_orfs(self.record, frame)
+            orf_candidates = orf_candidates
+            annotations[which_strand]["num_orf_candidates"] = len(orf_candidates)
+            if len(orf_candidates) == 0:
+                orf_types[which_strand] = ORFTypes(None, "no_orf_candidates")
+                orfs[which_strand] = None
+                continue
+
+            overlapping_candidates = orf_candidates.subsetByOverlaps(most_5prime)
+            if len(overlapping_candidates):
+                if method == '5prime-most':
+                    orf_i = range(len(overlapping_candidates))
+                    tmp = sorted(orf_i, key=lambda x: overlapping_candidates[x].start)
+                    assert(len(tmp) > 0)
+                    orf_range_i = tmp[0]
+                    # assert(not overlapping_candidates[orf_range_i]["no_start"])
+                elif method == '5prime-hsp':
+                    five_prime_of_hsp_i = filter(lambda i: overlapping_candidates[i].start <= most_5prime.start,
+                                                 range(len(overlapping_candidates)))
+                    if len(five_prime_of_hsp_i) > 0:
+                        five_prime_of_hsp_i = sorted(five_prime_of_hsp_i,
+                                                     key=lambda i: overlapping_candidates[i].start,
+                                                     reverse=True)
+                        orf_range_i = five_prime_of_hsp_i[0]
+                    else:
+                        orf_i = range(len(overlapping_candidates))
+                        tmp = sorted(orf_i, key=lambda x: overlapping_candidates[x].start)
+                        orf_range_i = tmp[0]
+                        assert(overlapping_candidates[orf_range_i].start > most_5prime.start)
+                else:
+                    raise ValueError("method must be either '5prime-most' or '5prime-hsp'")
+            else:
+                # no candidates overlap the most 5prime HSP
+                orf_types[which_strand] = ORFTypes(None, "no_overlap")
+                orfs[which_strand] = None
+                continue            
+
+            orf = overlapping_candidates[orf_range_i]
+            orfs[which_strand] = orf
+            if orf is None:
+                orf_types[which_strand] = ORFTypes(None, "no_overlap")                
+            else:
+                # check for ORF type, and annotate
+                orf_types[which_strand] = ORFTypes(orf)
+
+                annotations[which_strand]["frame"] = frame
+                annotations[which_strand]["most_5prime_hsp"] = most_5prime_hsp
+            assert(orf_types[which_strand] is not None)
+
+        assert(None not in orf_types)
+        return orfs, orf_types, annotations
         
     def predict_orf(self, method='5prime-hsp', use_pfam=True, min_expect=DEFAULT_MIN_EXPECT):
         """

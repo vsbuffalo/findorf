@@ -3,6 +3,15 @@
 `findorf` is an ORF prediction and transcriptome contig annotation
 tool designed to be non-model organism-friendly.
 
+**Caveat emptor**: `findorf` was tested for use in
+[Krasileva et al, 2013](http://genomebiology.com/2013/14/6/R66/abstract)
+and benchmarked using data from this project. In our tests, it has
+performed well. However, it has not been widely tested in other
+species and your mileage may vary. As with all bioinformatics program,
+check that your results are consistent with your own validation
+procedures. Also, I am quite busy nowdays so (as with all free
+software) there is no guarantee of support, but I will try my best.
+
 ## How is `findorf` different?
 
 There are many approaches to ORF annotation (see

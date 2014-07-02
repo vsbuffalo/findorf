@@ -7,6 +7,7 @@ Functions for:
    objects for each contig and taking BLASTX alignments and converting
    HSPs of the top alignment into a SeqRanges object.
 """
+import os
 import sys
 import cPickle
 

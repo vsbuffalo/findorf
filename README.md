@@ -9,7 +9,7 @@ and benchmarked using data from this project. In our tests, it has
 performed well. However, it has not been widely tested in other
 species and your mileage may vary. As with all bioinformatics program,
 check that your results are consistent with your own validation
-procedures. Also, I am quite busy nowdays so (as with all free
+procedures. Also, I am quite busy nowadays so (as with all free
 software) there is no guarantee of support, but I will try my best.
 
 ## How is `findorf` different?
